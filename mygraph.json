@@ -1,0 +1,53 @@
+{
+    "edges": [
+        { 
+            "start": "A",
+            "end": "B"
+        },
+        { 
+            "start": "A",
+            "end": "C"
+        },
+        { 
+            "start": "B",
+            "end": "D"
+        },
+        { 
+            "start": "C",
+            "end": "D"
+        }
+    ],
+    "nodes": {
+        "B": {
+            "source_type": "python-func",
+            "source": "string1",
+            "frequency": 3,
+            "output_type": "string",
+            "input_types": ["int"]
+        },
+        "A": {
+            "source_type": "python-func",
+            "source": "string2",
+            "frequency": 3,
+            "output_type": "int"
+        },
+        "C": {
+            "source_type": "python-func",
+            "source": "string3",
+            "frequency": 3,
+            "output_type": "float",
+            "input_types": ["int"]
+        },
+        "D": {
+            "source_type": "python-func",
+            "source": "string4",
+            "frequency": 3,
+            "input_types": ["string", "float"]
+        },
+        "E": {
+            "source_type": "python-func",
+            "source": "string5",
+            "frequency": 3
+        }
+    }
+}
