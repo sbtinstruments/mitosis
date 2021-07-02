@@ -69,8 +69,6 @@ def validate_graph_model(G: GraphModel):
                     _LOGGER.error(f'Output type ({output_type}) in node {predecessor_name} does not match input type ({input_type}) in node {node_name}')
                     return False
     return True
-                
-
 
 
 def create_graph(graph_file: Path):
@@ -83,28 +81,21 @@ def create_graph(graph_file: Path):
         return None
     # Create DiGraph object
     G = nx.DiGraph()
-    with open(graph_file, 'r') as file:
-        # Create edges
-        edges= []
-        data = json.load(file)
-        for edge_data in data['edges']:
-            edge = (edge_data['start'], edge_data['end'], util.without_keys(edge_data, {'start', 'end'}))
-            edges.append(edge)
-        G.add_edges_from(edges)
-
-        # Add metadata to existing nodes
-        node_data = data['nodes']
-        for node in G.nodes:
-            G.add_node(node, **node_data[node])
-
+    # Create edges
+    edges= []
+    for edge in model.edges:
+        edge_tuple = (edge.start, edge.end)
+        edges.append(edge_tuple)
+    G.add_edges_from(edges)
+    # Add metadata to existing nodes
+    node_data = model.nodes
+    for node in G.nodes:
+        G.add_node(node, data=node_data[node])
     return G
 
 
-    return True
-
-
 G = create_graph(Path('mygraph.json'))
-
+print(G.nodes)
 # G = create_graph(Path('mygraph.json'))
 # graph_valid = validate_graph(G)
 
