@@ -1,53 +1,100 @@
 {
     "edges": [
-        { 
-            "start": "A",
-            "end": "B"
+        {
+            "start": {
+                "node": "A",
+                "port": "RawDataOut"
+            },
+            "end": {
+                "node": "B",
+                "port": "RawDataB"
+            }
         },
-        { 
-            "start": "A",
-            "end": "C"
+        {
+            "start": {
+                "node": "A",
+                "port": "RawDataOut"
+            },
+            "end": {
+                "node": "C",
+                "port": "RawDataInC"
+            }
         },
-        { 
-            "start": "B",
-            "end": "D"
+        {
+            "start": {
+                "node": "B",
+                "port": "Timed"
+            },
+            "end": {
+                "node": "D",
+                "port": "StringIn"
+            },
+            "active": false
         },
-        { 
-            "start": "C",
-            "end": "D"
+        {
+            "start": {
+                "node": "C",
+                "port": "OutC"
+            },
+            "end": {
+                "node": "D",
+                "port": "FloatIn"
+            }
         }
     ],
     "nodes": {
         "B": {
             "source_type": "python-func",
             "source": "string1",
-            "frequency": 3,
-            "output_type": "string",
-            "input_types": ["int"]
+            "outputs": {
+                "Timed": {
+                    "datatype": "string"
+                }
+            },
+            "inputs": {
+                "RawDataB": {
+                    "datatype": "int"
+                }
+            }
         },
         "A": {
             "source_type": "python-func",
             "source": "string2",
-            "frequency": 3,
-            "output_type": "int"
+            "outputs": {
+                "RawDataOut": {
+                    "datatype": "int"
+                }
+            }
         },
         "C": {
             "source_type": "python-func",
             "source": "string3",
-            "frequency": 3,
-            "output_type": "float",
-            "input_types": ["int"]
+            "outputs": {
+                "OutC": {
+                    "datatype": "float"
+                }
+            },
+            "inputs": {
+                "RawDataInC": {
+                    "datatype": "int"
+                }
+            }
         },
         "D": {
             "source_type": "python-func",
             "source": "string4",
-            "frequency": 3,
-            "input_types": ["string", "float"]
+            "inputs": {
+                "StringIn": {
+                    "datatype": "string"
+                },
+                "FloatIn": {
+                    "datatype": "float"
+                }
+            }
         },
         "E": {
             "source_type": "python-func",
-            "source": "string5",
-            "frequency": 3
+            "source": "string5"
         }
     }
 }
