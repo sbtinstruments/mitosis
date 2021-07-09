@@ -14,7 +14,10 @@ from networkx.algorithms.shortest_paths.unweighted import predecessor
 from networkx.algorithms.dag import topological_sort
 import util
 
-from flow_model import FlowModel, FlowValidationException
+from flow_model import FlowModel, EdgeModel, FlowValidationException
+from async_node import AsyncNode
+
+from queue import Queue
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,79 +40,40 @@ _LOGGER = logging.getLogger(__name__)
 
 # run(main)
 
-
-
-def validate_flow_model(G: FlowModel):
-    """Validates a Graph Model to our custom specs"""
-    # Check if edges reference existing nodes
-    for edge in G.edges:
-        if edge.start.node not in G.nodes:
-            _LOGGER.error(f'The node {edge.start} does not exist')
-            return False
-        if edge.end.node not in G.nodes:
-            _LOGGER.error(f'The node {edge.end} does not exist')
-            return False
-    # Check that number of inputs match number of edges going in
-    for node_name, node in G.nodes.items():
-        num_input_edges = sum(1 for edge in G.edges if edge.end.node == node_name)
-        num_input_types = 0 if node.inputs is None else len(node.inputs)
-        if num_input_types != num_input_edges:
-            _LOGGER.error(f'The node {node_name} does not have the correct number of inputs ({num_input_types} but it should have {num_input_edges})')
-            return False
-
-    # For all edges, check that begin- and end-node has same type.
-    for edge in G.edges:
-        if G.nodes[edge.start.node].outputs[edge.start.port].datatype != G.nodes[edge.end.node].inputs[edge.end.port].datatype:
-            _LOGGER.error(f'The input and output type on the edge {edge} does not match')
-            return False
-    
-    # TODO: typecheck source/execute()-functions
-
-    return True
-
-
-def boot_order(model: FlowModel):
-    """
-    This returns a topological sort of nodes, which gives us the correct 
-    order to spin up nodes. An error in this sorting also detects cycles
-    """
-    # Create DiGraph object
-    G = nx.DiGraph()
-    # Create edges
-    edges= []
-    for edge in model.edges:
-        edge_tuple = (edge.start.node, edge.end.node)
-        edges.append(edge_tuple)
-    G.add_edges_from(edges)
-    try:
-        topo_sorted = [a for a in topological_sort(G)]
-    except nx.NetworkXUnfeasible as exc:
-        _LOGGER.error(f'The flow graph contains cycles')
-        raise FlowValidationException from exc
-    return reversed([a for a in topological_sort(G)])
-
-
-def create_flow_model(graph_file: Path):
-    """This creates a FlowModel from a json file"""
-    # Create model
-    model = FlowModel.parse_file(graph_file)
-    # Validate model
-    if not validate_flow_model(model):
-        _LOGGER.error(f'Flow model not valid')
-        return None
-    return model
-
+def match_input_ports_to_edges(G: FlowModel, node: AsyncNode):
+    res: dict[EdgeModel, Queue] = {}
+    for buffer_name, buffer in node.ins.buffers.items():
+        # Find an edge which ends in the same node and port
+        found_edge = None
+        for edge in G.edges:
+            edge_end_node_model = G.nodes[edge.end.node]
+            nodes_match = edge_end_node_model == node.model
+            ports_match = edge.end.port == buffer_name
+            if nodes_match and ports_match:
+                found_edge = edge
+        if found_edge is None:
+            raise FlowValidationException(f'Edge could not be matched to buffer')
+        res[found_edge] = buffer
+    return res
 
 # spawn tasks
 async def main():
     # Create Flow Model
     G = FlowModel.parse_file(Path('mygraph.json'))
     boot_order = G.boot_order()
+    
     # Spawn Tasks
+    buffers: dict[EdgeModel, Queue] = {}
     async with create_task_group() as task_group:
         for node_name in boot_order:
-            node = AsyncNode(G.nodes[node_name])
-            averager_node = await task_group.start(node, 0.5)
-            await task_group.start(start_producer_node, 3, averager_node)
+            # Create new node
+            node = AsyncNode(node_name, G.nodes[node_name], buffers)
+            # Update dict of available buffers
+            input_edges = match_input_ports_to_edges(G, node)
+            buffers.update(input_edges)
+            
+            
+
+            await task_group.start(node)
 
 run(main)

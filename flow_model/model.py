@@ -27,18 +27,27 @@ class SpecificPort(BaseModel):
     node: str
     port: str
 
+    def __hash__(self):
+        """Workaround to use this as dict keys"""
+        return hash((type(self),) + (self.node, self.port))
+
+
 class NodeModel(BaseModel):
     """A node in the flow graph"""
     source_type: NodeType
     source: str
     inputs: Optional[dict[str, PortModel]]
-    outputs: Optional[dict[str, PortModel]] 
+    outputs: Optional[dict[str, PortModel]]
 
 class EdgeModel(BaseModel):
     """An edge between two ports"""
     start: SpecificPort
     end: SpecificPort
     active: bool = True
+
+    def __hash__(self):
+        """Workaround to use this as dict keys"""
+        return hash((type(self),) + (self.start, self.end))
 
 def digraph_from_edges(flow_edges: list[EdgeModel]):
     """Create DiGraph object from a list of edges"""
