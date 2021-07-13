@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Callable, Any
 import logging
 
 from enum import Enum, auto, unique
@@ -14,10 +14,33 @@ class FlowValidationException(Exception):
     pass
 
 @unique
-class NodeType(Enum):
+class ExecutableType(str, Enum):
     """Possible ways of supplying execute() functions"""
     PYTHON_FUNC = "python-func"
     INLINE_PYTHON = "inline-python"
+
+class ExecutableModel(BaseModel):
+    type: ExecutableType
+    source: str
+    code: dict[str, Any]
+
+    @root_validator(pre=True)
+    def load_function(cls, values):
+        type_ = values.get('type')
+        source = values.get('source')
+        if type_ == ExecutableType.PYTHON_FUNC:
+            # Read file
+            with open('mygraph/'+source) as f:
+                source_str = f.read()
+            code_object = compile(source_str, source, 'exec')
+            globals_ = {}
+            exec(code_object, globals_)
+            values['code'] = globals_
+        else:
+            raise FlowValidationException(f'Unsupported Executable type')
+        return values
+    
+    # TODO: validate that we have a main function in self.code
 
 class PortModel(BaseModel):
     """An input/output port on a node"""
@@ -34,8 +57,7 @@ class SpecificPort(BaseModel):
 
 class NodeModel(BaseModel):
     """A node in the flow graph"""
-    source_type: NodeType
-    source: str
+    executable: ExecutableModel
     inputs: Optional[dict[str, PortModel]]
     outputs: Optional[dict[str, PortModel]]
 

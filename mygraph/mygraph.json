@@ -44,8 +44,10 @@
     ],
     "nodes": {
         "B": {
-            "source_type": "python-func",
-            "source": "string1",
+            "executable": {
+                "type": "python-func",
+                "source": "double_up.py"
+            },
             "outputs": {
                 "Timed": {
                     "datatype": "string"
@@ -58,8 +60,10 @@
             }
         },
         "A": {
-            "source_type": "python-func",
-            "source": "string2",
+            "executable": {
+                "type": "python-func",
+                "source": "source_node.py"
+            },
             "outputs": {
                 "RawDataOut": {
                     "datatype": "int"
@@ -67,8 +71,10 @@
             }
         },
         "C": {
-            "source_type": "python-func",
-            "source": "string3",
+            "executable": {
+                "type": "python-func",
+                "source": "triple_up.py"
+            },
             "outputs": {
                 "OutC": {
                     "datatype": "float"
@@ -81,8 +87,10 @@
             }
         },
         "D": {
-            "source_type": "python-func",
-            "source": "string4",
+            "executable": {
+                "type": "python-func",
+                "source": "adder_printer.py"
+            },
             "inputs": {
                 "StringIn": {
                     "datatype": "string"
@@ -91,10 +99,6 @@
                     "datatype": "float"
                 }
             }
-        },
-        "E": {
-            "source_type": "python-func",
-            "source": "string5"
         }
     }
 }
