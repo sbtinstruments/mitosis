@@ -57,6 +57,9 @@
                 "RawDataB": {
                     "datatype": "int"
                 }
+            },
+            "config": {
+                "frequency": 1
             }
         },
         "A": {
@@ -68,6 +71,9 @@
                 "RawDataOut": {
                     "datatype": "int"
                 }
+            },
+            "config": {
+                "frequency": 1
             }
         },
         "C": {
@@ -84,6 +90,9 @@
                 "RawDataInC": {
                     "datatype": "int"
                 }
+            },
+            "config": {
+                "frequency": 1
             }
         },
         "D": {
@@ -98,6 +107,9 @@
                 "FloatIn": {
                     "datatype": "float"
                 }
+            },
+            "config": {
+                "frequency": 1
             }
         }
     }

@@ -1,39 +1,38 @@
-from anyio import TASK_STATUS_IGNORED, create_task_group, run, create_memory_object_stream
-from anyio.abc import TaskStatus
-from anyio.streams.memory import MemoryObjectSendStream, MemoryObjectReceiveStream
-
+import logging
 from pathlib import Path
 
-import logging
+from anyio import (
+    TASK_STATUS_IGNORED,
+    create_memory_object_stream,
+    create_task_group,
+    run,
+    sleep,
+)
+from anyio.abc import TaskStatus
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-
-from flow_model import FlowModel, EdgeModel, FlowValidationException
-from async_node import AsyncNode
-
+from mitosis import MitosisApp
+from mitosis.async_node import AsyncNode
+from mitosis.model import EdgeModel, FlowModel
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def main():
-    # Create Flow Model
-    G = FlowModel.parse_file(Path('mygraph/mygraph.json'))
-    boot_order = G.boot_order()
-    # Create buffers
-    senders: dict[EdgeModel, MemoryObjectSendStream] = {}
-    receivers: dict[EdgeModel, MemoryObjectReceiveStream] = {}
-    for edgemodel in G.edges:
-        send_stream, receive_stream = create_memory_object_stream(max_buffer_size=20) #TODO: add item_types
-        senders[edgemodel] = send_stream
-        receivers[edgemodel] = receive_stream
+    async with create_task_group() as tg:
+        async with MitosisApp(tg, Path("mygraph/persistent.json")) as app:
+            await sleep(4)
+            flow_handle = await app.spawn_flow(tg, Path("mygraph/mygraph.json"))
+            print("created")
+            await sleep(3)
+            print("shutting down")
+            await flow_handle.shut_down()
+            print("here")
+            print(flow_handle._cs.shield)
 
-    
-    # Spawn Tasks
-    async with create_task_group() as task_group:
-        for node_name in boot_order:
-            # Create new node
-            node = AsyncNode(node_name, G.nodes[node_name], senders, receivers)
-            # Start task
-            await task_group.start(node)
 
 run(main)
 
+## TODO:
+## Persistent nodes that can shut down if no one has subscribed to them. Acts as possible inputs to Flows
+## Run several Flows simultaneously, allowing for shutting of and spinning up at run time

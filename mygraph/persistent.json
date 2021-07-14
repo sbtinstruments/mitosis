@@ -1,0 +1,34 @@
+{
+    "cells": {
+        "Random": {
+            "executable": {
+                "type": "python-func",
+                "source": "random.py"
+            },
+            "config": {
+                "frequency": 1,
+                "shut_down_when_ignored": false
+            },
+            "outputs": {
+                "FloatOut": {
+                    "datatype": "float"
+                }
+            }
+        },
+        "Ones": {
+            "executable": {
+                "type": "python-func",
+                "source": "ones.py"
+            },
+            "config": {
+                "frequency": 0.5,
+                "shut_down_when_ignored": true
+            },
+            "outputs": {
+                "IntOut": {
+                    "datatype": "int"
+                }
+            }
+        }
+    }
+}

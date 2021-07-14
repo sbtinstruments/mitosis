@@ -11,8 +11,79 @@ pydantic = "^1.8.2"
 anyio = "^3.2.1"
 
 [tool.poetry.dev-dependencies]
-black = {version = "^21.6b0", allow-prereleases = true}
-
+black = "^21.5b1"
+isort = "^5.8.0"
+mypy = "^0.812"
+pydocstyle = "^6.0.0"
+pylint = "^2.7.4"
+rope = "^0.18.0"
+pytest = "^5.2"
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+target-version = ['py39']
+
+[tool.isort]
+profile = 'black'
+
+[tool.pylint.master]
+# i,j,k: You can use this for an integer index in a loop.
+# v:  You can use this for pydantic `@validator` functions.
+# fs: We use this in the tests to get a pyfakefs file system reference.
+#     Since pytest's dependency injection is name based, we have to use
+#     this exact argument name.
+# tg: You can use this for an `anyio.TaskGroup`.
+# io: You can use this for `typing.BinaryIO` (and friends).
+# T,U,V: For `TypeVar`s
+good-names = 'i,j,k,v,fs,tg,io,T,U,V' # Default is 'i,j,k,ex,Run,_'
+# Increase the default values a bit. Yes, this may hurt maintainability
+# ever so slightly but it increases the speed of development.
+max-args = '7' # Default is 5
+max-attributes = '12' # Default is 7
+# Match black's default max line length
+max-line-length = '88' # Default is 100
+
+[tool.pylint.similarities]
+# Imports are often duplicated. If two different files use a lot of
+# the same imports, there is just no way around it. Therefore, we
+# simply ignore import statements completely when we look for duplicate
+# code.
+ignore-imports = 'y'
+
+[tool.pylint.'messages control']
+# Note that there is an ongoing discussion about, the current
+# pylint defaults:
+#     https://github.com/PyCQA/pylint/issues/3512
+#
+# It's also interesting to note that the pylint authors disable
+# some checks for the official pylint repo:
+#     https://github.com/PyCQA/pylint/blob/master/pylintrc#L56
+
+### IF YOU ENABLE A PYLINT CHECK THEN EXPLAIN WHY BELOW
+enable = '''
+'''
+
+### IF YOU DISABLE A PYLINT CHECK THEN EXPLAIN WHY BELOW
+#
+# fixme: We use "TODO: " to note areas that we can improve.
+#     It's nice to have this directly in the code in a way that
+#     we can easily search for.
+#     Related to: https://github.com/PyCQA/pylint/issues/2874
+#
+# missing-module-docstring,
+# missing-class-docstring,
+# missing-function-docstring: pydocstyle handles all this
+#     See: https://pylint.readthedocs.io/en/latest/faq.html#i-am-using-another-popular-linter-alongside-pylint-which-messages-should-i-disable-to-avoid-duplicates
+disable = '''
+  fixme,
+  missing-module-docstring,
+  missing-class-docstring,
+  missing-function-docstring,
+'''
+
+# Whitelist some extensions that pylint has troubles with.
+# pydantic: See https://github.com/samuelcolvin/pydantic/issues/1961
+extension-pkg-whitelist = 'pydantic'
+
