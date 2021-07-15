@@ -1,7 +1,7 @@
 from contextlib import AsyncExitStack
 from typing import Any, Optional
 
-from anyio import TASK_STATUS_IGNORED, Event, sleep
+from anyio import TASK_STATUS_IGNORED, Event, sleep, CancelScope
 from anyio.abc import TaskStatus
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
@@ -102,34 +102,45 @@ class AsyncNode:
 
     async def __call__(self, *, task_status: TaskStatus = TASK_STATUS_IGNORED):
         """Run the infinite loop of a node."""
-        task_status.started()
 
-        # Input/Output port setup
-        async with AsyncExitStack() as stack:
-            for receiver in self.ins.receivers.values():
-                await stack.enter_async_context(receiver)
-            for output_port in self.outs.senders.values():
-                for sender in output_port:
-                    await stack.enter_async_context(sender)
+        with CancelScope() as cancel_scope:
+            # The CancelScope gets passed back out to caller, so a task can be cancelled from outside
+            task_status.started(cancel_scope)
 
-            while True:
-                # If not running, wait here to be started again
-                if not self.running and self.resume is not None:
-                    await self.resume.wait()
+            # Input/Output port setup
+            async with AsyncExitStack() as stack:
+                for receiver in self.ins.receivers.values():
+                    await stack.enter_async_context(receiver)
+                for output_port in self.outs.senders.values():
+                    for sender in output_port:
+                        await stack.enter_async_context(sender)
 
-                # Get inputs. For now, just get one element from each input port if available
-                # TODO: Add Fan-In strategies
-                myfunc_inputs: list[Any] = []
-                for receive_stream in self.ins.receivers.values():
-                    myfunc_inputs.append(await receive_stream.receive())
+                while True:
+                    # 1: For persistent cells, check if sender pool has changed.
+                    # In this case, update senders.
+                    # Then check if you should start running, keep running, or keep being dormant.
+                    # If not running, wait here to be started again
 
-                myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
+                    # Need a good primitive for this. An event with one notifier, or a way to show that a cache has been changed
+                    # Several processes needs to notice this and take action, but each should only do so once
 
-                # Push results to child nodes
-                for output_port, e in zip(self.outs.senders.values(), [myfunc_outputs]):
-                    for output_stream in output_port:
-                        await output_stream.send_nowait(e)
+                    # Use a memory object stream to send the new list of senders. If it should be shutdown, it can receive(), otherwise it can receive_nowait()
+                    if not self.running and self.resume is not None:
+                        await self.resume.wait()
 
-                # Wait until it is time to run again
-                # TODO: Different strategies for waiting.
-                await sleep(1.0 / self.model.config.frequency)
+                    # Get inputs. For now, just get one element from each input port if available
+                    # TODO: Add Fan-In strategies
+                    myfunc_inputs: list[Any] = []
+                    for receive_stream in self.ins.receivers.values():
+                        myfunc_inputs.append(await receive_stream.receive())
+
+                    myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
+
+                    # Push results to child nodes
+                    for output_port, e in zip(self.outs.senders.values(), [myfunc_outputs]):
+                        for output_stream in output_port:
+                            await output_stream.send_nowait(e)
+
+                    # Wait until it is time to run again
+                    # TODO: Different strategies for waiting.
+                    await sleep(1.0 / self.model.config.frequency)

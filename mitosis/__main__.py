@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from mitosis.model.edge_model import SpecificPort
 from pathlib import Path
 from typing import AsyncContextManager
 
@@ -12,6 +13,7 @@ from anyio import (
 )
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from anyio import move_on_after
 
 from .async_node import AsyncNode
 from .model import EdgeModel, FlowModel, PersistentCellsModel
@@ -19,13 +21,13 @@ from .model import EdgeModel, FlowModel, PersistentCellsModel
 
 @dataclass
 class FlowHandle:
-    """Wrapper for an AnyIO TaskGroup, representing a flow"""
+    """Wrapper for a set of tasks, representing a flow"""
 
-    _cs: CancelScope
+    _scopes: dict[str, CancelScope]
 
     async def shut_down(self):
-        print("Cancelling!")
-        self._cs.cancel()
+        for cs in self._scopes.values():
+            cs.cancel()
 
 
 class MitosisApp(AsyncContextManager):
@@ -37,6 +39,9 @@ class MitosisApp(AsyncContextManager):
             persistent_cells_path
         )
         self.flows: dict[str, TaskGroup]
+        # A global stash of senders, representing active connections from persistent cells to Flows. 
+        # Whenever a flow starts or stops, the persistent cells must update themselves from this
+        self._persistent_senders: dict[SpecificPort, MemoryObjectSendStream] = {} 
 
     async def __aenter__(self):
         """Enter async context."""
@@ -52,10 +57,11 @@ class MitosisApp(AsyncContextManager):
     async def spawn_flow(self, tg: TaskGroup, path: Path):
         """Spawn a new Flow in the app. Attaches to persistent cells as needed."""
 
-        async def _flow():
+        async def _flow() -> dict[str, CancelScope]:
             # Create Flow Model
             flow_model = FlowModel.parse_file(path)
-            boot_order = flow_model.boot_order()
+            #boot_order = flow_model.boot_order()
+
             # Create buffers
             senders: dict[EdgeModel, MemoryObjectSendStream] = {}
             receivers: dict[EdgeModel, MemoryObjectReceiveStream] = {}
@@ -67,16 +73,18 @@ class MitosisApp(AsyncContextManager):
                 receivers[edge_model] = receive_stream
 
             # Spawn Tasks
-            async with CancelScope() as scope:
-                for node_name in boot_order:
-                    # Create new node
-                    node = AsyncNode(
-                        node_name, flow_model.nodes[node_name], senders, receivers
-                    )
-                    # Start task
-                    await tg.start(node)
+            scopes: dict[str, CancelScope] = {}
+            for node_name, node_model in flow_model.nodes.items():
+                # Create new node
+                node = AsyncNode(
+                    node_name, node_model, senders, receivers
+                )
+                # Start task
+                scopes[node_name] = await tg.start(node)
 
-            return scope
+            # Attach Flow to external connections
+            for externals
+            return scopes
 
-        flow_scope = await _flow()
-        return FlowHandle(flow_scope)
+        scopes = await _flow()
+        return FlowHandle(scopes)

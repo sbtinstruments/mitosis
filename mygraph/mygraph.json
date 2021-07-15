@@ -2,6 +2,16 @@
     "edges": [
         {
             "start": {
+                "node": "Ones",
+                "port": "IntOut"
+            },
+            "end": {
+                "node": "A",
+                "port": "GraphInput"
+            }
+        },
+        {
+            "start": {
                 "node": "A",
                 "port": "RawDataOut"
             },
@@ -42,6 +52,14 @@
             }
         }
     ],
+    "externals": {
+        "connections": [
+            {
+                "node": "Ones",
+                "port": "IntOut"
+            }
+        ]
+    },
     "nodes": {
         "B": {
             "executable": {
@@ -65,10 +83,15 @@
         "A": {
             "executable": {
                 "type": "python-func",
-                "source": "source_node.py"
+                "source": "pipe_through.py"
             },
             "outputs": {
                 "RawDataOut": {
+                    "datatype": "int"
+                }
+            },
+            "inputs": {
+                "GraphInput": {
                     "datatype": "int"
                 }
             },

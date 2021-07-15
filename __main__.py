@@ -24,11 +24,10 @@ async def main():
             await sleep(4)
             flow_handle = await app.spawn_flow(tg, Path("mygraph/mygraph.json"))
             print("created")
-            await sleep(3)
+            await sleep(5)
             print("shutting down")
             await flow_handle.shut_down()
             print("here")
-            print(flow_handle._cs.shield)
 
 
 run(main)
