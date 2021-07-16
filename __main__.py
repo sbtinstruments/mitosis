@@ -21,13 +21,13 @@ _LOGGER = logging.getLogger(__name__)
 async def main():
     async with create_task_group() as tg:
         async with MitosisApp(tg, Path("mygraph/persistent.json")) as app:
-            await sleep(4)
+            await sleep(5)
             flow_handle = await app.spawn_flow(tg, Path("mygraph/mygraph.json"))
             print("created")
-            await sleep(5)
+            await sleep(10)
             print("shutting down")
             await flow_handle.shut_down()
-            print("here")
+            await sleep(5)
 
 
 run(main)

@@ -1,21 +1,19 @@
 import logging
-
 from pathlib import Path
-
-from typing import Optional, TypeVar, TYPE_CHECKING, Generic, Type, Any
+from typing import TYPE_CHECKING, Any, Generic, Optional, Type, TypeVar
 
 from networkx import DiGraph, NetworkXUnfeasible
 from networkx.algorithms.dag import topological_sort
 from pydantic import BaseModel, root_validator, validator
 
 from ..basics import FlowValidationException
-from . import EdgeModel, NodeModel, ExternalPortsModel
+from . import EdgeModel, ExternalPortsModel, NodeModel
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def digraph_from_edges(flow_edges: list[EdgeModel]):
-    """Create DiGraph object from a list of edges"""
+    """Create DiGraph object from a list of edges."""
     G = DiGraph()
     # Create edges
     edges = []
@@ -24,7 +22,6 @@ def digraph_from_edges(flow_edges: list[EdgeModel]):
         edges.append(edge_tuple)
     G.add_edges_from(edges)
     return G
-
 
 
 class FlowModel(BaseModel):
@@ -60,23 +57,33 @@ class FlowModel(BaseModel):
             # Start
             if edge.start.node in nodes:
                 if not edge.start.port in nodes[edge.start.node].outputs:
-                    raise FlowValidationException(f"The port {edge.start.port} on the node {edge.start.node} does not exist")
+                    raise FlowValidationException(
+                        f"The port {edge.start.port} on the node {edge.start.node} does not exist"
+                    )
             else:
                 # The node wasn't found in the FlowGraph. It might still be in the list of external nodes
                 for ext_port in external_ports:
                     if edge.start.node == ext_port.node:
                         # Node found. Check port
                         if not edge.start.port == ext_port.port:
-                            raise FlowValidationException(f"The port {edge.start.port} on the node {edge.start.node} does not exist")
+                            raise FlowValidationException(
+                                f"The port {edge.start.port} on the node {edge.start.node} does not exist"
+                            )
                         break
                 else:
-                    raise FlowValidationException(f"The node {edge.start.node} does not exist")
+                    raise FlowValidationException(
+                        f"The node {edge.start.node} does not exist"
+                    )
             # End
             if edge.end.node in nodes:
                 if not edge.end.port in nodes[edge.end.node].inputs:
-                    raise FlowValidationException(f"The port {edge.end.port} on the node {edge.end.node} does not exist")
+                    raise FlowValidationException(
+                        f"The port {edge.end.port} on the node {edge.end.node} does not exist"
+                    )
             else:
-                raise FlowValidationException(f"The node {edge.end.node} does not exist")
+                raise FlowValidationException(
+                    f"The node {edge.end.node} does not exist"
+                )
         return values
 
     @root_validator

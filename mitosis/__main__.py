@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from mitosis.model.edge_model import SpecificPort
 from pathlib import Path
 from typing import AsyncContextManager
 
@@ -8,26 +7,31 @@ from anyio import (
     CancelScope,
     create_memory_object_stream,
     create_task_group,
+    move_on_after,
     run,
     sleep,
 )
-from anyio.abc import TaskGroup
+from anyio.abc import AsyncResource, TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from anyio import move_on_after
+
+from mitosis.model.edge_model import SpecificPort
 
 from .async_node import AsyncNode
 from .model import EdgeModel, FlowModel, PersistentCellsModel
+from .util import edge_matches_output_port
 
 
-@dataclass
-class FlowHandle:
-    """Wrapper for a set of tasks, representing a flow"""
+class Flow(AsyncResource):
+    """A set of tasks, representing a flow in an app."""
 
     _scopes: dict[str, CancelScope]
 
     async def shut_down(self):
         for cs in self._scopes.values():
             cs.cancel()
+
+    async def aclose(self):
+        pass
 
 
 class MitosisApp(AsyncContextManager):
@@ -39,14 +43,21 @@ class MitosisApp(AsyncContextManager):
             persistent_cells_path
         )
         self.flows: dict[str, TaskGroup]
-        # A global stash of senders, representing active connections from persistent cells to Flows. 
+        # A global stash of senders, representing active connections from persistent cells to Flows.
         # Whenever a flow starts or stops, the persistent cells must update themselves from this
-        self._persistent_senders: dict[SpecificPort, MemoryObjectSendStream] = {} 
+        self._attachments: dict[SpecificPort, list[MemoryObjectSendStream]] = {}
+        # These streams communicate changes in attachments to the persistent cells
+        self._attachments_senders: list[MemoryObjectSendStream] = []
+        self._attachments_receivers: dict[str, MemoryObjectReceiveStream] = {}
+        for cell_name in self.persistent_cells_model.cells.keys():
+            send_stream, receive_stream = create_memory_object_stream(max_buffer_size=1)
+            self._attachments_senders.append(send_stream)
+            self._attachments_receivers[cell_name] = receive_stream
 
     async def __aenter__(self):
         """Enter async context."""
         for cell_name, cell_model in self.persistent_cells_model.cells.items():
-            cell = AsyncNode(cell_name, cell_model, {}, {})
+            cell = AsyncNode(cell_name, cell_model, {}, {}, self._attachments_receivers)
             await self._tg.start(cell)
         return self
 
@@ -60,7 +71,7 @@ class MitosisApp(AsyncContextManager):
         async def _flow() -> dict[str, CancelScope]:
             # Create Flow Model
             flow_model = FlowModel.parse_file(path)
-            #boot_order = flow_model.boot_order()
+            # boot_order = flow_model.boot_order()
 
             # Create buffers
             senders: dict[EdgeModel, MemoryObjectSendStream] = {}
@@ -76,15 +87,29 @@ class MitosisApp(AsyncContextManager):
             scopes: dict[str, CancelScope] = {}
             for node_name, node_model in flow_model.nodes.items():
                 # Create new node
-                node = AsyncNode(
-                    node_name, node_model, senders, receivers
-                )
+                node = AsyncNode(node_name, node_model, senders, receivers)
                 # Start task
                 scopes[node_name] = await tg.start(node)
 
-            # Attach Flow to external connections
-            for externals
+            # Attach Flow to external connections.
+            if flow_model.externals is not None:
+                for external_port in flow_model.externals.connections:
+                    # Find all connections to that external port
+                    found_send_streams = [
+                        send_stream
+                        for edge_model, send_stream in senders.items()
+                        if edge_matches_output_port(
+                            external_port.node, external_port.port, edge_model
+                        )
+                    ]
+                    self._attachments[external_port] = found_send_streams
+
             return scopes
 
+        # Create flow
         scopes = await _flow()
+        # Inform persistent cells that new attachments may be available
+        for sender in self._attachments_senders:
+            await sender.send(self._attachments)
+
         return FlowHandle(scopes)

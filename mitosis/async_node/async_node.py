@@ -1,25 +1,21 @@
 from contextlib import AsyncExitStack
 from typing import Any, Optional
 
-from anyio import TASK_STATUS_IGNORED, Event, sleep, CancelScope
+from anyio import (
+    TASK_STATUS_IGNORED,
+    BrokenResourceError,
+    CancelScope,
+    Event,
+    WouldBlock,
+    sleep,
+)
 from anyio.abc import TaskStatus
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
+from mitosis.model.edge_model import SpecificPort
+
 from ..model import EdgeModel, NodeModel, PortModel
-
-
-def edge_matches_input_port(node_name, port_name, edge_model: EdgeModel):
-    nodes_match = node_name == edge_model.end.node
-    ports_match = port_name == edge_model.end.port
-    if nodes_match and ports_match:
-        return True
-
-
-def edge_matches_output_port(node_name, port_name, edge_model: EdgeModel):
-    nodes_match = node_name == edge_model.start.node
-    ports_match = port_name == edge_model.start.port
-    if nodes_match and ports_match:
-        return True
+from ..util import edge_matches_input_port, edge_matches_output_port
 
 
 class InGroup:
@@ -38,7 +34,6 @@ class InGroup:
                 # Find appropriate edge
                 for edge_model in all_receivers.keys():
                     if edge_matches_input_port(node_name, port_name, edge_model):
-                        print("Found one!")
                         self.receivers[port_name] = all_receivers[edge_model]
 
 
@@ -69,6 +64,7 @@ class AsyncNode:
         model: NodeModel,
         senders: dict[EdgeModel, MemoryObjectSendStream],
         receivers: dict[EdgeModel, MemoryObjectReceiveStream],
+        attachments_receivers: Optional[dict[str, MemoryObjectReceiveStream]] = None,
     ):
         self.name = name
         self.model = model
@@ -77,7 +73,10 @@ class AsyncNode:
         self.outs: OutGroup = OutGroup(self.name, self.model.outputs, senders)
         # Do initial check if node should shut down
         self.running: bool = True
-        self.resume: Optional[Event] = None
+        # ReceiveStream for new attached connections
+        self._attachments_receiver: Optional[MemoryObjectReceiveStream] = None
+        if attachments_receivers is not None:
+            self._attachments_receiver = attachments_receivers[self.name]
         # If all senders are empty
         if self.should_stop():
             self.stop()
@@ -85,7 +84,6 @@ class AsyncNode:
     def start(self):
         """Start the Node execution."""
         self.running = True
-        self.resume.set()
 
     def should_stop(self):
         """Check if a node should stop execution."""
@@ -98,7 +96,14 @@ class AsyncNode:
     def stop(self):
         """Stop the Node execution."""
         self.running = False
-        self.resume = Event()
+
+    def attach_new_senders(self, new_attachments):
+        for output_port_name, port_senders in self.outs.senders.items():
+            specific_port = SpecificPort(node=self.name, port=output_port_name)
+            if specific_port in new_attachments.keys():
+                new_senders = new_attachments[specific_port]
+                port_senders.clear()
+                port_senders += new_senders
 
     async def __call__(self, *, task_status: TaskStatus = TASK_STATUS_IGNORED):
         """Run the infinite loop of a node."""
@@ -125,8 +130,34 @@ class AsyncNode:
                     # Several processes needs to notice this and take action, but each should only do so once
 
                     # Use a memory object stream to send the new list of senders. If it should be shutdown, it can receive(), otherwise it can receive_nowait()
-                    if not self.running and self.resume is not None:
-                        await self.resume.wait()
+
+                    # Only persistent cells have this
+                    if self._attachments_receiver is not None:
+                        if not self.running:
+                            # If node is not running, it will wait here until new attachments are available
+                            new_attachments = await self._attachments_receiver.receive()
+                            # When received, attach new senders to output ports.
+                            self.attach_new_senders(new_attachments)
+                            # Check if there are anywhere to send data now
+                            if self.should_stop():
+                                continue
+                            else:
+                                self.start()
+                        else:
+                            try:
+                                new_attachments = (
+                                    self._attachments_receiver.receive_nowait()
+                                )
+                                self.attach_new_senders(new_attachments)
+                                # Check if there are anywhere to send data now
+                                if self.should_stop():
+                                    self.stop()
+                                    continue
+                                else:
+                                    self.start()
+                            except WouldBlock:
+                                # This is the usual case for a running node
+                                pass
 
                     # Get inputs. For now, just get one element from each input port if available
                     # TODO: Add Fan-In strategies
@@ -137,9 +168,15 @@ class AsyncNode:
                     myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
 
                     # Push results to child nodes
-                    for output_port, e in zip(self.outs.senders.values(), [myfunc_outputs]):
+                    for output_port, e in zip(
+                        self.outs.senders.values(), [myfunc_outputs]
+                    ):
                         for output_stream in output_port:
-                            await output_stream.send_nowait(e)
+                            try:
+                                await output_stream.send_nowait(e)
+                            except BrokenRessourceError as exc:
+                                # This is probably a persistent cell, trying to send to a Flow which has been shut down.
+                                
 
                     # Wait until it is time to run again
                     # TODO: Different strategies for waiting.
