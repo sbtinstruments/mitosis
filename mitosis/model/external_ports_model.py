@@ -1,8 +1,8 @@
-from mitosis.basics.exceptions import FlowValidationException
 from pydantic import BaseModel, validator
 
-from ..basics import FlowValidationException
+from mitosis.basics.exceptions import FlowValidationException
 
+from ..basics import FlowValidationException
 from . import SpecificPort
 
 

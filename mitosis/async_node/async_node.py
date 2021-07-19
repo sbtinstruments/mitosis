@@ -9,12 +9,10 @@ from anyio import (
     WouldBlock,
     sleep,
 )
-from anyio.abc import TaskStatus
+from anyio.abc import AsyncResource, TaskStatus
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-from mitosis.model.edge_model import SpecificPort
-
-from ..model import EdgeModel, NodeModel, PortModel
+from ..model import EdgeModel, NodeModel, PortModel, SpecificPort
 from ..util import edge_matches_input_port, edge_matches_output_port
 
 
@@ -57,7 +55,7 @@ class OutGroup:
                 self.senders[port_name] = found_send_streams
 
 
-class AsyncNode:
+class AsyncNode(AsyncResource):
     def __init__(
         self,
         name: str,
@@ -68,6 +66,7 @@ class AsyncNode:
     ):
         self.name = name
         self.model = model
+        self._stack = AsyncExitStack()
         # Parse inputs
         self.ins: InGroup = InGroup(self.name, self.model.inputs, receivers)
         self.outs: OutGroup = OutGroup(self.name, self.model.outputs, senders)
@@ -97,87 +96,79 @@ class AsyncNode:
         """Stop the Node execution."""
         self.running = False
 
-    def attach_new_senders(self, new_attachments):
+    async def attach_new_senders(self, new_attachments):
         for output_port_name, port_senders in self.outs.senders.items():
             specific_port = SpecificPort(node=self.name, port=output_port_name)
             if specific_port in new_attachments.keys():
                 new_senders = new_attachments[specific_port]
+                newcomers = [
+                    sender for sender in new_senders if sender not in port_senders
+                ]
                 port_senders.clear()
                 port_senders += new_senders
 
+    async def __aenter__(self):
+        """Put all senders and receivers on the stack."""
+        for receiver in self.ins.receivers.values():
+            await self._stack.enter_async_context(receiver)
+        for output_port in self.outs.senders.values():
+            for sender in output_port:
+                await self._stack.enter_async_context(sender)
+        return self
+
+    async def aclose(self):
+        """Unwind the local stack."""
+        await self._stack.aclose()
+
     async def __call__(self, *, task_status: TaskStatus = TASK_STATUS_IGNORED):
         """Run the infinite loop of a node."""
+        task_status.started()
 
-        with CancelScope() as cancel_scope:
-            # The CancelScope gets passed back out to caller, so a task can be cancelled from outside
-            task_status.started(cancel_scope)
+        while True:
+            # Only persistent cells have this
+            if self._attachments_receiver is not None:
+                if not self.running:
+                    # If node is not running, it will wait here until new attachments are available
+                    new_attachments = await self._attachments_receiver.receive()
+                    # When received, attach new senders to output ports.
+                    await self.attach_new_senders(new_attachments)
+                    # Check if there are anywhere to send data now
+                    if self.should_stop():
+                        continue
+                    else:
+                        self.start()
+                else:
+                    # If node is running, just check (nowait) if there are any new attachments
+                    try:
+                        new_attachments = self._attachments_receiver.receive_nowait()
+                        await self.attach_new_senders(new_attachments)
+                        # Check if there are anywhere to send data now
+                        if self.should_stop():
+                            self.stop()
+                            continue
+                    except WouldBlock:
+                        # This is the usual case for a running node
+                        pass
 
-            # Input/Output port setup
-            async with AsyncExitStack() as stack:
-                for receiver in self.ins.receivers.values():
-                    await stack.enter_async_context(receiver)
-                for output_port in self.outs.senders.values():
-                    for sender in output_port:
-                        await stack.enter_async_context(sender)
+            # Get inputs. For now, just get one element from each input port if available
+            # TODO: Add Fan-In strategies
+            myfunc_inputs: list[Any] = []
+            for receive_stream in self.ins.receivers.values():
+                myfunc_inputs.append(await receive_stream.receive())
 
-                while True:
-                    # 1: For persistent cells, check if sender pool has changed.
-                    # In this case, update senders.
-                    # Then check if you should start running, keep running, or keep being dormant.
-                    # If not running, wait here to be started again
+            myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
 
-                    # Need a good primitive for this. An event with one notifier, or a way to show that a cache has been changed
-                    # Several processes needs to notice this and take action, but each should only do so once
+            # Push results to child nodes.
+            # TODO: Proper mapping from myfunc outputs to output ports!
+            for output_port, e in zip(self.outs.senders.values(), [myfunc_outputs]):
+                for output_stream in output_port:
+                    try:
+                        await output_stream.send_nowait(e)
+                    except BrokenResourceError as exc:
+                        # This is probably a persistent cell, trying to send to a Flow which has been shut down.
+                        print("BROKE RESOURCE ERROR")
+                        pass  # TODO
 
-                    # Use a memory object stream to send the new list of senders. If it should be shutdown, it can receive(), otherwise it can receive_nowait()
-
-                    # Only persistent cells have this
-                    if self._attachments_receiver is not None:
-                        if not self.running:
-                            # If node is not running, it will wait here until new attachments are available
-                            new_attachments = await self._attachments_receiver.receive()
-                            # When received, attach new senders to output ports.
-                            self.attach_new_senders(new_attachments)
-                            # Check if there are anywhere to send data now
-                            if self.should_stop():
-                                continue
-                            else:
-                                self.start()
-                        else:
-                            try:
-                                new_attachments = (
-                                    self._attachments_receiver.receive_nowait()
-                                )
-                                self.attach_new_senders(new_attachments)
-                                # Check if there are anywhere to send data now
-                                if self.should_stop():
-                                    self.stop()
-                                    continue
-                                else:
-                                    self.start()
-                            except WouldBlock:
-                                # This is the usual case for a running node
-                                pass
-
-                    # Get inputs. For now, just get one element from each input port if available
-                    # TODO: Add Fan-In strategies
-                    myfunc_inputs: list[Any] = []
-                    for receive_stream in self.ins.receivers.values():
-                        myfunc_inputs.append(await receive_stream.receive())
-
-                    myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
-
-                    # Push results to child nodes
-                    for output_port, e in zip(
-                        self.outs.senders.values(), [myfunc_outputs]
-                    ):
-                        for output_stream in output_port:
-                            try:
-                                await output_stream.send_nowait(e)
-                            except BrokenRessourceError as exc:
-                                # This is probably a persistent cell, trying to send to a Flow which has been shut down.
-                                
-
-                    # Wait until it is time to run again
-                    # TODO: Different strategies for waiting.
-                    await sleep(1.0 / self.model.config.frequency)
+            # Wait until it is time to run again
+            # TODO: Different strategies for waiting.
+            await sleep(1.0 / self.model.config.frequency)

@@ -12,6 +12,7 @@ def edge_matches_input_port(node_name, port_name, edge_model: EdgeModel):
     ports_match = port_name == edge_model.end.port
     if nodes_match and ports_match:
         return True
+    return False
 
 
 def edge_matches_output_port(node_name, port_name, edge_model: EdgeModel):
@@ -19,3 +20,4 @@ def edge_matches_output_port(node_name, port_name, edge_model: EdgeModel):
     ports_match = port_name == edge_model.start.port
     if nodes_match and ports_match:
         return True
+    return False

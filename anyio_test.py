@@ -1,24 +1,53 @@
-from anyio import create_task_group, move_on_after, sleep, run, TASK_STATUS_IGNORED, CancelScope
+import logging
+from contextlib import AsyncExitStack
+from pathlib import Path
+
+from anyio import (
+    TASK_STATUS_IGNORED,
+    create_memory_object_stream,
+    create_task_group,
+    run,
+    sleep,
+)
 from anyio.abc import TaskStatus
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
+from mitosis import Flow, MitosisApp
+from mitosis.async_node import AsyncNode
+from mitosis.model import EdgeModel, FlowModel
 
-class A:
-    async def __call__(self, *, task_status: TaskStatus = TASK_STATUS_IGNORED):
-      with CancelScope() as scope:
-        task_status.started(scope)
-        print("Starting sleep")
-        await sleep(5)
-        print("This should never be printed")
+_LOGGER = logging.getLogger(__name__)
 
 
 async def main():
-    async with create_task_group() as tg:
-      a = A()
-      a_scope = await tg.start(a)
-      await sleep(2)
-      a_scope.cancel()
-      # The cancel_called property will be True if timeout was reached
-      print("Exited cancel scope, cancelled =", a_scope.cancel_called)
+    async with create_task_group() as tg, AsyncExitStack() as stack:
+        app = MitosisApp(tg, Path("mygraph/persistent.json"))
+        await stack.enter_async_context(app)
+
+        await sleep(4)
+
+        flow: Flow = app.create_flow(Path("mygraph/mygraph.json"))
+
+        await app.start_flow(flow)
+
+        print("created")
+        await sleep(1)
+
+        print("shutting down")
+        await app.stop_flow(flow)  # Cancels its internal TaskGroup
+
+        await sleep(4)
+        print("starting up again")
+        flow2: Flow = app.create_flow(Path("mygraph/mygraph.json"))
+
+        await app.start_flow(flow2)
+        print("started ===================")
+        # await sleep(5)
+        # Implicit join
 
 
 run(main)
+
+## TODO:
+## Persistent nodes that can shut down if no one has subscribed to them. Acts as possible inputs to Flows
+## Run several Flows simultaneously, allowing for shutting of and spinning up at run time

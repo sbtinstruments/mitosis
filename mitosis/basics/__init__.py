@@ -1,1 +1,5 @@
-from .exceptions import FlowValidationException, PersistentCellValidationException
+from .exceptions import (
+    FlowValidationException,
+    PersistentCellValidationException,
+    FlowIntegrationException,
+)
