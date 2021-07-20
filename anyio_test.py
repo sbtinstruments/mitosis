@@ -8,6 +8,7 @@ from anyio import (
     create_task_group,
     run,
     sleep,
+    sleep_forever,
 )
 from anyio.abc import TaskStatus
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
@@ -31,19 +32,21 @@ async def main():
         await app.start_flow(flow)
 
         print("created")
-        await sleep(1)
+        await sleep(3)
 
-        print("shutting down")
-        await app.stop_flow(flow)  # Cancels its internal TaskGroup
-
-        await sleep(4)
-        print("starting up again")
+        print("creating another one")
         flow2: Flow = app.create_flow(Path("mygraph/mygraph.json"))
 
         await app.start_flow(flow2)
+
+        await sleep(3)
+        print("shutting down the first one")
+        await app.stop_flow(flow)  # Cancels its internal TaskGroup
+
         print("started ===================")
-        # await sleep(5)
-        # Implicit join
+        await sleep_forever()  # Needed, because there is no implicit join anymore
+
+    print("I am done with this shit")
 
 
 run(main)

@@ -35,8 +35,6 @@ class Flow(AsyncResource):
 
     async def __aenter__(self):
         """Start the flow in a taskgroup."""
-        self._tg = create_task_group()
-
         # Create buffers
         for edge_model in self._model.edges:
             send_stream, receive_stream = create_memory_object_stream(
@@ -56,6 +54,8 @@ class Flow(AsyncResource):
             await self._stack.enter_async_context(node)
             nodes.append(node)
 
+        # Create task group and start tasks
+        self._tg = create_task_group()
         await self._stack.enter_async_context(self._tg)
         for node in nodes:
             # Start task
@@ -66,7 +66,7 @@ class Flow(AsyncResource):
     async def aclose(self):
         """Close a flow. Stop all computation."""
         await self._tg.cancel_scope.cancel()
-        await self._stack.__aexit__(None, None, None)
+        await self._stack.aclose()
 
 
 class MitosisApp(AsyncContextManager):
@@ -142,7 +142,6 @@ class MitosisApp(AsyncContextManager):
                 else:
                     self._attachments[external_port] += found_send_streams
         # Inform persistent cells that new attachments may be available
-        print(self._attachments[SpecificPort(node="Ones", port="IntOut")])
         await self.update_attachments()
 
     async def stop_flow(self, flow: Flow):
@@ -164,7 +163,6 @@ class MitosisApp(AsyncContextManager):
                     for sender in current_attachments
                     if sender not in found_send_streams
                 ]
-        print(self._attachments[SpecificPort(node="Ones", port="IntOut")])
         await self.update_attachments()
         # Stop processes
         await flow.aclose()
