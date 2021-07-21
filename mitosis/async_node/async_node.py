@@ -113,7 +113,6 @@ class AsyncNode(AsyncResource):
         for output_port in self.outs.senders.values():
             for sender in output_port:
                 await self._stack.enter_async_context(sender)
-        print(f"{self.name} :: aenter")
         return self
 
     async def aclose(self):
@@ -151,33 +150,23 @@ class AsyncNode(AsyncResource):
                         except WouldBlock:
                             # This is the usual case for a running node
                             pass
-                print(f"{self.name} :: 1")
                 # Get inputs. For now, just get one element from each input port if available
                 # TODO: Add Fan-In strategies
                 myfunc_inputs: list[Any] = []
                 for receive_stream in self.ins.receivers.values():
-                    print(f"{self.name} :: 1.5")
-                    if self.name == "B":
-                        print(receive_stream.statistics())
                     myfunc_inputs.append(await receive_stream.receive())
-                    print(f"{self.name} :: 1.6")
-                print(f"{self.name} :: 2")
                 myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
-                print(f"{self.name} :: 3")
                 # Push results to child nodes.
                 # TODO: Proper mapping from myfunc outputs to output ports!
                 for output_port, e in zip(self.outs.senders.values(), [myfunc_outputs]):
                     for output_stream in output_port:
                         try:
                             await output_stream.send_nowait(e)
-                            if self.name == "A":
-                                print(output_stream.statistics())
                         except BrokenResourceError as exc:
                             # This is probably a persistent cell, trying to send to a Flow which has been shut down.
-                            print("BROKE RESOURCE ERROR")
+                            print("BROKEN RESOURCE ERROR")
                             pass  # TODO
 
-                print(f"{self.name} :: 4")
                 # Wait until it is time to run again
                 # TODO: Different strategies for waiting.
                 await sleep(1.0 / self.model.config.frequency)

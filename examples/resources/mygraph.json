@@ -64,7 +64,7 @@
         "B": {
             "executable": {
                 "type": "python-func",
-                "source": "double_up.py"
+                "source": "examples/resources/double_up.py"
             },
             "outputs": {
                 "Timed": {
@@ -83,7 +83,7 @@
         "A": {
             "executable": {
                 "type": "python-func",
-                "source": "pipe_through.py"
+                "source": "examples/resources/pipe_through.py"
             },
             "outputs": {
                 "RawDataOut": {
@@ -102,7 +102,7 @@
         "C": {
             "executable": {
                 "type": "python-func",
-                "source": "triple_up.py"
+                "source": "examples/resources/triple_up.py"
             },
             "outputs": {
                 "OutC": {
@@ -121,7 +121,7 @@
         "D": {
             "executable": {
                 "type": "python-func",
-                "source": "adder_printer.py"
+                "source": "examples/resources/adder_printer.py"
             },
             "inputs": {
                 "StringIn": {

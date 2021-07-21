@@ -3,7 +3,7 @@
         "Random": {
             "executable": {
                 "type": "python-func",
-                "source": "random.py"
+                "source": "examples/resources/random.py"
             },
             "config": {
                 "frequency": 1,
@@ -18,7 +18,7 @@
         "Ones": {
             "executable": {
                 "type": "python-func",
-                "source": "ones.py"
+                "source": "examples/resources/ones.py"
             },
             "config": {
                 "frequency": 0.5,

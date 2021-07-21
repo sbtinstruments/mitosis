@@ -1,72 +1,16 @@
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncContextManager, Optional
+from typing import AsyncContextManager
 
-from anyio import (
-    TASK_STATUS_IGNORED,
-    CancelScope,
-    create_memory_object_stream,
-    create_task_group,
-    move_on_after,
-    run,
-    sleep,
-)
-from anyio.abc import AsyncResource, TaskGroup
+from anyio import create_memory_object_stream
+from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-from .async_node import AsyncNode
-from .basics import FlowIntegrationException
-from .model import EdgeModel, FlowModel, PersistentCellsModel, SpecificPort
-from .util import edge_matches_output_port
-
-
-class Flow(AsyncResource):
-    """A set of tasks, representing a flow in an app."""
-
-    def __init__(self, model: FlowModel):
-        """Create a Flow from a FlowModel."""
-        self._model: FlowModel = model
-        self._stack = AsyncExitStack()
-        self._tg: Optional[TaskGroup] = None
-        # Buffers
-        self._senders: dict[EdgeModel, MemoryObjectSendStream] = {}
-        self._receivers: dict[EdgeModel, MemoryObjectReceiveStream] = {}
-
-    async def __aenter__(self):
-        """Start the flow in a taskgroup."""
-        # Create buffers
-        for edge_model in self._model.edges:
-            send_stream, receive_stream = create_memory_object_stream(
-                max_buffer_size=20
-            )  # TODO: add item_types
-            self._senders[edge_model] = send_stream
-            self._receivers[edge_model] = receive_stream
-
-        # Create Tasks
-        nodes = []
-        for node_name in self._model.nodes.keys():
-            # Create new node
-            node = AsyncNode(
-                node_name, self._model.nodes[node_name], self._senders, self._receivers
-            )
-            # Put on the stack
-            await self._stack.enter_async_context(node)
-            nodes.append(node)
-
-        # Create task group and start tasks
-        self._tg = create_task_group()
-        await self._stack.enter_async_context(self._tg)
-        for node in nodes:
-            # Start task
-            await self._tg.start(node)
-
-        return self
-
-    async def aclose(self):
-        """Close a flow. Stop all computation."""
-        await self._tg.cancel_scope.cancel()
-        await self._stack.aclose()
+from ..async_node import AsyncNode
+from ..basics import FlowIntegrationException
+from ..flow import Flow
+from ..model import FlowModel, PersistentCellsModel, SpecificPort
+from ..util import edge_matches_output_port
 
 
 class MitosisApp(AsyncContextManager):
@@ -145,7 +89,7 @@ class MitosisApp(AsyncContextManager):
         await self.update_attachments()
 
     async def stop_flow(self, flow: Flow):
-        """Detach a flow from persistent cells, then stop it"""
+        """Detach a flow from persistent cells, then stop it."""
         # Detach Flow from external connections.
         if flow._model.externals is not None:
             for external_port in flow._model.externals.connections:

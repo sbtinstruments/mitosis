@@ -28,7 +28,7 @@ class ExecutableModel(BaseModel):
         source = values.get("source")
         if type_ == ExecutableType.PYTHON_FUNC:
             # Read file
-            with open("mygraph/" + source) as f:
+            with open(source) as f:
                 source_str = f.read()
             code_object = compile(source_str, source, "exec")
             globals_ = {}
