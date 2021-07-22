@@ -27,8 +27,9 @@ class PersistentCellsModel(BaseModel):
                 )
             return v
 
-    def is_subset(self, external_ports):
+    def is_subset(self, attachments):
         """Determine if all external ports are supplied by this set of persistent cells."""
+        # TODO: change this from checking external_ports to attachments
         if external_ports is not None:
             for external_connection in external_ports.connections:
                 # Find all connections to that external port

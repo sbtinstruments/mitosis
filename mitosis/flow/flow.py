@@ -1,8 +1,9 @@
 from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from typing import Optional
 
 from anyio import create_memory_object_stream, create_task_group
-from anyio.abc import AsyncResource, TaskGroup
+from anyio.abc import AsyncResource, CancelScope, TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from ..async_node import AsyncNode
@@ -55,3 +56,19 @@ class Flow(AsyncResource):
         """Close a flow. Stop all computation."""
         await self._tg.cancel_scope.cancel()
         await self._stack.aclose()
+
+
+@dataclass
+class FlowCancelScope:
+    """Wraps (potentially) several different cancel scopes relating to a flow."""
+
+    all_tasks: CancelScope
+
+    async def cancel_all(self):
+        """Cancel all tasks."""
+        await self.all_tasks.cancel()
+
+
+async def run_flow_in_taskgroup(flow: Flow, tg: TaskGroup) -> FlowCancelScope:
+    """Start tasks from a flow. Returns a cancellation object."""
+    pass  # TODO!

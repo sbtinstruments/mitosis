@@ -10,10 +10,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def main():
-    async with create_task_group() as tg, AsyncExitStack() as stack:
-        app = MitosisApp(tg, Path("examples/resources/persistent.json"))
-        await stack.enter_async_context(app)
-
+    async with MitosisApp(Path("examples/resources/persistent.json")) as app:
+        # Setup stuff here: Start HTTP-client, register flows for later start.
         await sleep(4)
 
         flow: Flow = app.create_flow(Path("examples/resources/mygraph.json"))
@@ -32,10 +30,6 @@ async def main():
         print("shutting down the first one")
         await app.stop_flow(flow)  # Cancels its internal TaskGroup
         print("Stopped")
-
-        await sleep_forever()  # Needed, because there is no implicit join anymore
-
-    print("I am done with the EventLoop")
 
 
 run(main)
