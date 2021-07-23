@@ -1,3 +1,4 @@
+import logging
 from contextlib import AsyncExitStack
 from typing import Any, Optional
 
@@ -5,6 +6,7 @@ from anyio import (
     TASK_STATUS_IGNORED,
     BrokenResourceError,
     CancelScope,
+    ClosedResourceError,
     Event,
     WouldBlock,
     current_effective_deadline,
@@ -15,6 +17,8 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 
 from ..model import EdgeModel, NodeModel, PortModel, SpecificPort
 from ..util import edge_matches_input_port, edge_matches_output_port
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class InGroup:
@@ -154,7 +158,13 @@ class AsyncNode(AsyncResource):
                 # TODO: Add Fan-In strategies
                 myfunc_inputs: list[Any] = []
                 for receive_stream in self.ins.receivers.values():
-                    myfunc_inputs.append(await receive_stream.receive())
+                    try:
+                        myfunc_inputs.append(await receive_stream.receive())
+                    except ClosedResourceError as exc:
+                        _LOGGER.error(
+                            f"ClosedResourceError in {self.name}", exc_info=exc
+                        )
+                # Run executable code
                 myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
                 # Push results to child nodes.
                 # TODO: Proper mapping from myfunc outputs to output ports!
@@ -171,5 +181,4 @@ class AsyncNode(AsyncResource):
                 # TODO: Different strategies for waiting.
                 await sleep(1.0 / self.model.config.frequency)
         except Exception as exc:
-            print(exc)
-            print("something went wrong")
+            _LOGGER.error("something went wrong", exc_info=exc)

@@ -9,11 +9,9 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 
 from ..async_node import AsyncNode
 from ..basics import FlowIntegrationException
-from ..flow import Flow
+from ..flow import Flow, FlowHandle, run_flow_in_taskgroup
 from ..model import FlowModel, PersistentCellsModel, SpecificPort
 from ..util import edge_matches_output_port
-
-FlowHandle = namedtuple("FlowHandle", "flow cancelscope")
 
 
 def add_to_attachments_stash(
@@ -72,7 +70,7 @@ class FlowManager(AsyncContextManager):
 
     async def __aenter__(self):
         """Enter async context. Creates own taskgroup."""
-        self._stack.enter_async_context(self._tg)
+        await self._stack.enter_async_context(self._tg)
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
@@ -90,10 +88,10 @@ class FlowManager(AsyncContextManager):
         # Create flow
         flow = self._create_flow(path)
         # Start flow
-        cs = await run_flow_in_taskgroup(flow, self._tg)
+        flow_handle = await run_flow_in_taskgroup(flow, self._tg)
         # Update stash of external connections.
         add_to_attachments_stash(self._attachments, flow)
-        return FlowHandle(flow, cs)
+        return flow_handle
 
     # TODO: Rethink this function. Should the order be:
     # Detach -> Update senders -> close flow

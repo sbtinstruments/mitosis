@@ -1,9 +1,8 @@
-from typing import Optional
-
+from anyio.streams.memory import MemoryObjectSendStream
 from pydantic import BaseModel, validator
 
 from ..basics import PersistentCellValidationException
-from . import NodeModel
+from . import NodeModel, SpecificPort
 
 
 class PersistentCellsModel(BaseModel):
@@ -27,20 +26,19 @@ class PersistentCellsModel(BaseModel):
                 )
             return v
 
-    def is_subset(self, attachments):
-        """Determine if all external ports are supplied by this set of persistent cells."""
-        # TODO: change this from checking external_ports to attachments
-        if external_ports is not None:
-            for external_connection in external_ports.connections:
+    def is_subset(self, attachments: dict[SpecificPort, list[MemoryObjectSendStream]]):
+        """Determine if all requested attachments are supplied by this set of persistent cells."""
+        if attachments is not None:
+            for specific_port in attachments.keys():
                 # Find all connections to that external port
                 try:
-                    cell = self.cells[external_connection.node]
+                    cell = self.cells[specific_port.node]
                 except KeyError:
                     return False
                 if cell.outputs is None:
                     return False
                 try:
-                    cell.outputs[external_connection.port]
+                    cell.outputs[specific_port.port]
                 except KeyError:
                     return False
         return True

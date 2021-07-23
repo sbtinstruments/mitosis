@@ -9,17 +9,13 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 
 from ..async_node import AsyncNode
 from ..basics import FlowIntegrationException
-from ..flow import Flow, FlowCancelScope, run_flow_in_taskgroup
+from ..flow import FlowHandle
 from ..model import FlowModel, PersistentCellsModel, SpecificPort
 from ..util import edge_matches_output_port
 from .flow_manager import FlowManager
 from .persistent_cell_manager import PersistentCellManager
 
 _LOGGER = logging.getLogger(__name__)
-
-from collections import namedtuple
-
-FlowHandle = namedtuple("FlowHandle", "flow cancelscope")
 
 
 class MitosisApp(AsyncContextManager):
@@ -50,46 +46,32 @@ class MitosisApp(AsyncContextManager):
         """Exit async context."""
         await self._stack.__aexit__(None, None, None)
 
-    async def start_flow(self, path: Path):
+    async def start_flow(self, path: Path, key=None):
         """
         Start a flow in the app on a given AsyncExitStack. Attaches to persistent cells as needed.
         """
         # Start flow
-        fh = await self._fman.start_flow(path)
-        # Register flow
-        self.running_flows[path] = fh
+        flow_handle = await self._fman.start_flow(path)
         # Inform persistent cells that new attachments may be available
         await self._pcman.update_attachments(self._fman.get_attachments())
+        # Register flow
+        flow_key = path if key is None else key
+        self.running_flows[flow_key] = flow_handle
 
-    # TODO: Refactor to use managers
-    async def stop_flow(self, path: Path):
-        """Detach a flow from persistent cells, then stop it."""
-        if self.running_flows.get(path) is None:
+    async def stop_flow(self, key):
+        """Stop a flow and detach it from persistent cells."""
+        if self.running_flows.get(key) is None:
             _LOGGER.warning(
-                f"The flow at {path} cannot be stopped, since it is not running"
+                f"The flow at {key} cannot be stopped, since it is not running"
             )
             return
 
         # Get flow handle
-        fh = self.running_flows[path]
-        flow = fh.flow
-        # Detach Flow from external connections
-        if flow._model.externals is not None:
-            for external_port in flow._model.externals.connections:
-                # Find all connections to that external port
-                found_send_streams = [
-                    send_stream
-                    for edge_model, send_stream in flow._senders.items()
-                    if edge_matches_output_port(
-                        external_port.node, external_port.port, edge_model
-                    )
-                ]
-                current_attachments = self._attachments[external_port]
-                self._attachments[external_port] = [
-                    sender
-                    for sender in current_attachments
-                    if sender not in found_send_streams
-                ]
-        await self.update_attachments()
-        # Stop processes
-        await flow.aclose()
+        flow_handle = self.running_flows[key]
+        flow = flow_handle.flow
+        # Stop flow
+        await self._fman.stop_flow(flow)
+        # Inform persistent cells that attachments stash may have changed
+        await self._pcman.update_attachments(self._fman.get_attachments())
+        # Deregister flow
+        del self.running_flows[key]
