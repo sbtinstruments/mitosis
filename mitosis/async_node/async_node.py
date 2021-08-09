@@ -125,10 +125,16 @@ class AsyncNode(AsyncResource):
 
     async def __call__(self, *, task_status: TaskStatus = TASK_STATUS_IGNORED):
         """Run the infinite loop of a node."""
-        task_status.started()
-        try:
+        with CancelScope() as scope:
+            task_status.started(scope)
             while True:
-                # Only persistent cells have this
+
+                # Starting and stopping is idempotent
+                if self.should_stop():
+                    self.stop()
+                else:
+                    self.start()
+
                 if self._attachments_receiver is not None:
                     if not self.running:
                         # If node is not running, it will wait here until new attachments are available
@@ -136,24 +142,18 @@ class AsyncNode(AsyncResource):
                         # When received, attach new senders to output ports.
                         await self.attach_new_senders(new_attachments)
                         # Check if there are anywhere to send data now
-                        if self.should_stop():
-                            continue
-                        else:
-                            self.start()
+                        continue
+
+                    # If node is running, just check (nowait) if there are any new attachments
+                    try:
+                        new_attachments = self._attachments_receiver.receive_nowait()
+                    except WouldBlock:
+                        # This is the usual case for a running node
+                        pass
                     else:
-                        # If node is running, just check (nowait) if there are any new attachments
-                        try:
-                            new_attachments = (
-                                self._attachments_receiver.receive_nowait()
-                            )
-                            await self.attach_new_senders(new_attachments)
-                            # Check if there are anywhere to send data now
-                            if self.should_stop():
-                                self.stop()
-                                continue
-                        except WouldBlock:
-                            # This is the usual case for a running node
-                            pass
+                        await self.attach_new_senders(new_attachments)
+                        continue
+
                 # Get inputs. For now, just get one element from each input port if available
                 # TODO: Add Fan-In strategies
                 myfunc_inputs: list[Any] = []
@@ -174,11 +174,12 @@ class AsyncNode(AsyncResource):
                             await output_stream.send_nowait(e)
                         except BrokenResourceError as exc:
                             # This is probably a persistent cell, trying to send to a Flow which has been shut down.
-                            print("BROKEN RESOURCE ERROR")
+                            _LOGGER.debug(
+                                f"Persistent cell '{self.name}' sending through a cancelled stream",
+                                exc_info=exc,
+                            )
                             pass  # TODO
 
                 # Wait until it is time to run again
                 # TODO: Different strategies for waiting.
                 await sleep(1.0 / self.model.config.frequency)
-        except Exception as exc:
-            _LOGGER.error("something went wrong", exc_info=exc)

@@ -44,11 +44,12 @@ class Flow(AsyncResource):
 class FlowCancelScope:
     """Wraps (potentially) several different cancel scopes relating to a flow."""
 
-    all_tasks: CancelScope
+    all_tasks: list[CancelScope]
 
     async def cancel_all(self):
         """Cancel all tasks."""
-        await self.all_tasks.cancel()
+        for task in self.all_tasks:
+            await task.cancel()
 
 
 @dataclass
@@ -78,10 +79,11 @@ async def run_flow_in_taskgroup(flow: Flow, tg: TaskGroup) -> FlowHandle:
         nodes.append(node)
 
     # Start tasks
-    with CancelScope() as scope:
-        for node in nodes:
-            # Start task
-            await tg.start(node)
+    scopes = []
+    for node in nodes:
+        # Start task
+        cancel_scope = await tg.start(node)
+        scopes.append(cancel_scope)
 
-    flow_cancel_scope = FlowCancelScope(scope)
+    flow_cancel_scope = FlowCancelScope(scopes)
     return FlowHandle(flow, flow_cancel_scope)

@@ -8,3 +8,8 @@ class PersistentCellValidationException(Exception):
 
 class FlowIntegrationException(Exception):
     pass
+
+
+class KeyNotUniqueException(Exception):
+    def __init__(self, key):
+        self.key = key

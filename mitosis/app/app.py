@@ -8,7 +8,7 @@ from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from ..async_node import AsyncNode
-from ..basics import FlowIntegrationException
+from ..basics import FlowIntegrationException, KeyNotUniqueException
 from ..flow import FlowHandle
 from ..model import FlowModel, PersistentCellsModel, SpecificPort
 from ..util import edge_matches_output_port
@@ -27,8 +27,6 @@ class MitosisApp(AsyncContextManager):
         self._pcman = PersistentCellManager(persistent_cells_path, self._tg)
         self._fman = FlowManager()
 
-        self.running_flows: dict[Path, FlowHandle] = {}
-
         # TODO: Is this still needed??
         # A global stash of senders, representing active connections from persistent cells to Flows.
         # Whenever a flow starts or stops, the persistent cells must update themselves from this
@@ -36,10 +34,13 @@ class MitosisApp(AsyncContextManager):
 
     async def __aenter__(self):
         """Enter async context."""
-        await self._stack.enter_async_context(self._tg)
-        # Starts the persistent cells
-        await self._stack.enter_async_context(self._pcman)
-        await self._stack.enter_async_context(self._fman)
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(self._tg)
+            # Starts the persistent cells
+            await stack.enter_async_context(self._pcman)
+            await stack.enter_async_context(self._fman)
+            # Transfer ownership to instance
+            self._stack = stack.pop_all()
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
@@ -51,27 +52,17 @@ class MitosisApp(AsyncContextManager):
         Start a flow in the app on a given AsyncExitStack. Attaches to persistent cells as needed.
         """
         # Start flow
-        flow_handle = await self._fman.start_flow(path)
+        try:
+            await self._fman.start_flow(path, key)
+        except KeyNotUniqueException as exc:
+            _LOGGER.error(f"The key '{exc.key}' is already in use.")
+            return
         # Inform persistent cells that new attachments may be available
         await self._pcman.update_attachments(self._fman.get_attachments())
-        # Register flow
-        flow_key = path if key is None else key
-        self.running_flows[flow_key] = flow_handle
 
     async def stop_flow(self, key):
         """Stop a flow and detach it from persistent cells."""
-        if self.running_flows.get(key) is None:
-            _LOGGER.warning(
-                f"The flow at {key} cannot be stopped, since it is not running"
-            )
-            return
-
-        # Get flow handle
-        flow_handle = self.running_flows[key]
-        flow = flow_handle.flow
         # Stop flow
-        await self._fman.stop_flow(flow)
+        await self._fman.stop_flow(key)
         # Inform persistent cells that attachments stash may have changed
         await self._pcman.update_attachments(self._fman.get_attachments())
-        # Deregister flow
-        del self.running_flows[key]
