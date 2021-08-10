@@ -19,6 +19,8 @@ class ExecutableType(str, Enum):
 
 class ExecutableModel(BaseModel):
     type: ExecutableType
+    # TODO: `source` is only needed at init. Remove from the model and move to
+    # a static method instead. E.g.: `ExecutableModel.from_file`
     source: str
     code: dict[str, Any]
 

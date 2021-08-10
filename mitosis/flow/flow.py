@@ -20,7 +20,11 @@ class Flow(AsyncResource):
 
     def __init__(self, model: FlowModel):
         """Create a Flow from a FlowModel."""
+        # TODO: Does a flow need to store the model that it's based on?
+        # If we only need, e.g., the nodes, then let's only store them.
+        # Furthermore, if we only n
         self._model: FlowModel = model
+        # TODO: Who enters/exits this private stack? It's not done in `Flow`. :)
         self._stack = AsyncExitStack()
         self._tg: Optional[TaskGroup] = None
         # Buffers
@@ -65,6 +69,7 @@ class FlowHandle:
         await self.flow.aclose()
 
 
+# TODO: This is the "loader". Move all this to a `Flow.from_model` classmethod.
 async def run_flow_in_taskgroup(flow: Flow, tg: TaskGroup) -> FlowHandle:
     """Start tasks from a flow. Returns a cancellation object."""
     # Create Tasks

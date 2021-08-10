@@ -45,6 +45,8 @@ class MitosisApp(AsyncContextManager):
 
     async def __aexit__(self, exc_type, exc, tb):
         """Exit async context."""
+        # TODO: Forward the exceptions to the stack's `__aexit__`. Otherwise, you effectively
+        # hide the exceptions from the underlying task group.
         await self._stack.__aexit__(None, None, None)
 
     async def start_flow(self, path: Path, key=None):
@@ -54,6 +56,11 @@ class MitosisApp(AsyncContextManager):
         # Start flow
         try:
             await self._fman.start_flow(path, key)
+        # TODO: Let the exception propagate. Otherwise, how will the user know that something
+        # went wrong?
+        #
+        # Also, let the caller do the logging. Aka "silent per default" principle.
+        # Alternatively, use a much lower log level. E.g. "debug".
         except KeyNotUniqueException as exc:
             _LOGGER.error(f"The key '{exc.key}' is already in use.")
             return
