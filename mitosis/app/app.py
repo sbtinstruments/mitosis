@@ -1,17 +1,13 @@
 import logging
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import AsyncContextManager, Optional
+from typing import AsyncContextManager
 
-from anyio import create_memory_object_stream, create_task_group
-from anyio.abc import TaskGroup
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from anyio import create_task_group
+from anyio.streams.memory import MemoryObjectSendStream
 
-from ..async_node import AsyncNode
-from ..basics import FlowIntegrationException, KeyNotUniqueException
-from ..flow import FlowHandle
-from ..model import FlowModel, PersistentCellsModel, SpecificPort
-from ..util import edge_matches_output_port
+from ..basics import AppException, KeyNotUniqueException
+from ..model import SpecificPort
 from .flow_manager import FlowManager
 from .persistent_cell_manager import PersistentCellManager
 
@@ -45,9 +41,7 @@ class MitosisApp(AsyncContextManager):
 
     async def __aexit__(self, exc_type, exc, tb):
         """Exit async context."""
-        # TODO: Forward the exceptions to the stack's `__aexit__`. Otherwise, you effectively
-        # hide the exceptions from the underlying task group.
-        await self._stack.__aexit__(None, None, None)
+        await self._stack.__aexit__(exc_type, exc, tb)
 
     async def start_flow(self, path: Path, key=None):
         """
@@ -56,14 +50,8 @@ class MitosisApp(AsyncContextManager):
         # Start flow
         try:
             await self._fman.start_flow(path, key)
-        # TODO: Let the exception propagate. Otherwise, how will the user know that something
-        # went wrong?
-        #
-        # Also, let the caller do the logging. Aka "silent per default" principle.
-        # Alternatively, use a much lower log level. E.g. "debug".
         except KeyNotUniqueException as exc:
-            _LOGGER.error(f"The key '{exc.key}' is already in use.")
-            return
+            raise AppException("Could not start flow: {exc}") from exc
         # Inform persistent cells that new attachments may be available
         await self._pcman.update_attachments(self._fman.get_attachments())
 

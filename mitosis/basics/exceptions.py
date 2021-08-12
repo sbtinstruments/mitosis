@@ -1,22 +1,26 @@
-# TODO: Add base exception class. E.g.: "MitosisError" or "FlowError".
-# Derive all other exceptions from this class. This way, the user can "catch"
-# all mitosis-related errors with a single `except` block. Should we add another
-# error in the future, the very same `èxcept` block catches it as well.
-# In other words: We have future-compatible user code.
-
-
-class FlowValidationException(Exception):
+class MitosisException(Exception):
     pass
 
 
-class PersistentCellValidationException(Exception):
+class FlowValidationException(MitosisException):
     pass
 
 
-class FlowIntegrationException(Exception):
+class PersistentCellValidationException(MitosisException):
     pass
 
 
-class KeyNotUniqueException(Exception):
+class FlowIntegrationException(MitosisException):
+    pass
+
+
+class KeyNotUniqueException(MitosisException):
     def __init__(self, key):
         self.key = key
+
+# NOTE: Is it better to throw a standard keyerror?
+class KeyNotPresentException(MitosisException, KeyError):
+    pass
+
+class AppException(MitosisException):
+    pass

@@ -10,16 +10,10 @@ def without_keys(d: dict, keys: Union[List[str], Set[str]]):
 def edge_matches_input_port(node_name, port_name, edge_model: EdgeModel):
     nodes_match = node_name == edge_model.end.node
     ports_match = port_name == edge_model.end.port
-    # TODO: See below
-    if nodes_match and ports_match:
-        return True
-    return False
+    return nodes_match and ports_match
 
 
 def edge_matches_output_port(node_name, port_name, edge_model: EdgeModel):
     nodes_match = node_name == edge_model.start.node
     ports_match = port_name == edge_model.start.port
-    # TODO: Replace with `return nodes_match and ports_match`
-    if nodes_match and ports_match:
-        return True
-    return False
+    return nodes_match and ports_match

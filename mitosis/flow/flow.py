@@ -1,43 +1,60 @@
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
-from typing import Optional
-
-from anyio import create_memory_object_stream, create_task_group
+from dataclasses import dataclass, field
+from copy import deepcopy
+from anyio import create_memory_object_stream
 from anyio.abc import AsyncResource, CancelScope, TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from ..async_node import AsyncNode
 from ..model import EdgeModel, FlowModel
 
+@dataclass
+class Flow:
+    """A set of nodes, compiled from a flow model."""
 
-class Flow(AsyncResource):
-    """
-    A set of tasks, representing a flow in an app.
+    model: FlowModel
+    nodes: list[AsyncNode] = field(init=False)
 
-    The current usage is to create the object, use it in the run_in_task_group function,
-    and then at a later point stop it through the FlowHandle.
-    """
+    def __post_init__(self):
+        """Assemble the Nodes from a FlowModel."""
+        # Create Nodes
+        for node_name in self.model.nodes.keys():
+            # Create new node
+            node = AsyncNode(node_name, self.model.nodes[node_name])
+            self.nodes.append(node)
 
-    def __init__(self, model: FlowModel):
-        """Create a Flow from a FlowModel."""
-        # TODO: Does a flow need to store the model that it's based on?
-        # If we only need, e.g., the nodes, then let's only store them.
-        # Furthermore, if we only n
-        self._model: FlowModel = model
-        # TODO: Who enters/exits this private stack? It's not done in `Flow`. :)
+class LinkedFlow(AsyncResource):
+    """A Flow ready for execution. This is one-time use, not reentrant."""
+
+    def __init__(self, flow: Flow):
+        self.flow = deepcopy(flow) # We will be modifying this, so 'pass-by-value'
         self._stack = AsyncExitStack()
-        self._tg: Optional[TaskGroup] = None
-        # Buffers
-        self._senders: dict[EdgeModel, MemoryObjectSendStream] = {}
-        self._receivers: dict[EdgeModel, MemoryObjectReceiveStream] = {}
-
         # Create buffers
-        for edge_model in self._model.edges:
+        (self._senders, self._receivers) = self._create_buffers(self.flow)
+        # Hand off buffers
+        for node in self.flow.nodes:
+            node.offer_buffers(self._senders, self._receivers)
+
+    @staticmethod
+    def _create_buffers(flow: Flow) -> tuple[
+        dict[EdgeModel, MemoryObjectSendStream], dict[EdgeModel, MemoryObjectReceiveStream]
+    ]:
+        """Create buffers (send- and receive-streams)."""
+        senders: dict[EdgeModel, MemoryObjectSendStream] = {}
+        receivers: dict[EdgeModel, MemoryObjectReceiveStream] = {}
+        for edge_model in flow.model.edges:
             send_stream, receive_stream = create_memory_object_stream(
                 max_buffer_size=20
             )  # TODO: add item_types
-            self._senders[edge_model] = send_stream
-            self._receivers[edge_model] = receive_stream
+            senders[edge_model] = send_stream
+            receivers[edge_model] = receive_stream
+        return (senders, receivers)
+
+    async def __aenter__(self):
+        for node in self.flow.nodes:
+            await self._stack.enter_async_context(node)
+        return self
+
 
     async def aclose(self):
         """Close a flow."""
@@ -60,35 +77,23 @@ class FlowCancelScope:
 class FlowHandle:
     """A Flow and its FlowCancelScope, with convenience methods."""
 
-    flow: Flow
+    linked_flow: LinkedFlow
     scopes: FlowCancelScope
 
     async def stop_flow_immediately(self):
         """Stop all tasks and unwind stack."""
         await self.scopes.cancel_all()
-        await self.flow.aclose()
+        await self.linked_flow.aclose()
 
+    @classmethod
+    async def from_linked_flow(cls, linked_flow: LinkedFlow, tg: TaskGroup):
+        """Create an instance from a LinkedFlow. The tasks start in the given TaskGroup."""
+        # Start tasks
+        scopes: list[CancelScope] = []
+        for node in linked_flow.flow.nodes:
+            # Start task
+            cancel_scope: CancelScope = await tg.start(node)
+            scopes.append(cancel_scope)
 
-# TODO: This is the "loader". Move all this to a `Flow.from_model` classmethod.
-async def run_flow_in_taskgroup(flow: Flow, tg: TaskGroup) -> FlowHandle:
-    """Start tasks from a flow. Returns a cancellation object."""
-    # Create Tasks
-    nodes = []
-    for node_name in flow._model.nodes.keys():
-        # Create new node
-        node = AsyncNode(
-            node_name, flow._model.nodes[node_name], flow._senders, flow._receivers
-        )
-        # Put on the stack
-        await flow._stack.enter_async_context(node)
-        nodes.append(node)
-
-    # Start tasks
-    scopes = []
-    for node in nodes:
-        # Start task
-        cancel_scope = await tg.start(node)
-        scopes.append(cancel_scope)
-
-    flow_cancel_scope = FlowCancelScope(scopes)
-    return FlowHandle(flow, flow_cancel_scope)
+        flow_cancel_scope = FlowCancelScope(scopes)
+        return cls(linked_flow, flow_cancel_scope)

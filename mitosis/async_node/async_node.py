@@ -28,10 +28,10 @@ class InGroup:
         self,
         node_name: str,
         input_ports: Optional[dict[str, PortModel]],
-        all_receivers: dict[EdgeModel, MemoryObjectReceiveStream],
+        all_receivers: Optional[dict[EdgeModel, MemoryObjectReceiveStream]] = None,
     ):
         self.receivers: dict[str, MemoryObjectReceiveStream] = {}
-        if input_ports is not None:
+        if input_ports is not None and all_receivers is not None:
             # For each input port
             for port_name in input_ports.keys():
                 # Find appropriate edge
@@ -47,10 +47,10 @@ class OutGroup:
         self,
         node_name: str,
         output_ports: Optional[dict[str, PortModel]],
-        all_senders: dict[EdgeModel, MemoryObjectSendStream],
+        all_senders: Optional[dict[EdgeModel, MemoryObjectSendStream]] = None,
     ):
         self.senders: dict[str, list[MemoryObjectSendStream]] = {}
-        if output_ports is not None:
+        if output_ports is not None and all_senders is not None:
             for port_name in output_ports.keys():
                 found_send_streams = [
                     send_stream
@@ -65,18 +65,17 @@ class AsyncNode(AsyncResource):
         self,
         name: str,
         model: NodeModel,
-        senders: dict[EdgeModel, MemoryObjectSendStream],
-        receivers: dict[EdgeModel, MemoryObjectReceiveStream],
         attachments_receivers: Optional[dict[str, MemoryObjectReceiveStream]] = None,
     ):
         self.name = name
         self.model = model
         self._stack = AsyncExitStack()
-        # Parse inputs
-        self.ins: InGroup = InGroup(self.name, self.model.inputs, receivers)
-        self.outs: OutGroup = OutGroup(self.name, self.model.outputs, senders)
-        # Do initial check if node should shut down
         self.running: bool = True
+
+        # Default Input/Output-groups TODO: Break these out into their own component
+        self.ins = InGroup(self.name, self.model.inputs)
+        self.outs = OutGroup(self.name, self.model.outputs)
+
         # ReceiveStream for new attached connections
         self._attachments_receiver: Optional[MemoryObjectReceiveStream] = None
         if attachments_receivers is not None:
@@ -84,6 +83,11 @@ class AsyncNode(AsyncResource):
         # If all senders are empty
         if self.should_stop():
             self.stop()
+
+    def offer_buffers(self, senders: dict[EdgeModel, MemoryObjectSendStream], receivers: dict[EdgeModel, MemoryObjectReceiveStream]) -> None:
+        """Pass buffers in and create new input/output-groups."""
+        self.ins = InGroup(self.name, self.model.inputs, receivers)
+        self.outs = OutGroup(self.name, self.model.outputs, senders)
 
     def start(self):
         """Start the Node execution."""
