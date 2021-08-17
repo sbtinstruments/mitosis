@@ -1,7 +1,7 @@
 import logging
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import AsyncContextManager
+from typing import AsyncContextManager, Hashable
 
 from anyio import create_task_group
 from anyio.streams.memory import MemoryObjectSendStream
@@ -43,21 +43,26 @@ class MitosisApp(AsyncContextManager):
         """Exit async context."""
         await self._stack.__aexit__(exc_type, exc, tb)
 
-    async def start_flow(self, path: Path, key=None):
+    def register_flow(self, path: Path, key=None) -> Hashable:
+        """Compile and register a flow from a filepath."""
+        return self._fman.register_flow(path, key)
+
+    async def start_flow(self, key):
         """
         Start a flow in the app on a given AsyncExitStack. Attaches to persistent cells as needed.
         """
         # Start flow
-        try:
-            await self._fman.start_flow(path, key)
-        except KeyNotUniqueException as exc:
-            raise AppException("Could not start flow: {exc}") from exc
+        await self._fman.start_flow(key)
         # Inform persistent cells that new attachments may be available
         await self._pcman.update_attachments(self._fman.get_attachments())
 
     async def stop_flow(self, key):
+        """Detach a flow from background nodes and stop source nodes."""
+        raise NotImplementedError
+
+    async def kill_flow(self, key):
         """Stop a flow and detach it from persistent cells."""
         # Stop flow
-        await self._fman.stop_flow(key)
+        await self._fman.kill_flow(key)
         # Inform persistent cells that attachments stash may have changed
         await self._pcman.update_attachments(self._fman.get_attachments())

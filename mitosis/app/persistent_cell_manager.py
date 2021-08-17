@@ -33,7 +33,7 @@ class PersistentCellManager(AsyncResource):
         """Enter async context. This starts the underlying processes."""
         # Create persistent cells
         for cell_name, cell_model in self.persistent_cells_model.cells.items():
-            cell = AsyncNode(cell_name, cell_model, {}, {}, self._attachments_receivers)
+            cell = AsyncNode(cell_name, cell_model, self._attachments_receivers)
             await self._stack.enter_async_context(cell)
             await self._tg.start(cell)
         return self

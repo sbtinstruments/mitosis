@@ -6,9 +6,10 @@ from typing import AsyncContextManager, Hashable, Optional
 from anyio import create_task_group
 from anyio.streams.memory import MemoryObjectSendStream
 
-from mitosis.basics.exceptions import KeyNotUniqueException, KeyNotPresentException
+from mitosis.basics.exceptions import KeyNotPresentException, KeyNotUniqueException
+from mitosis.flow.flow import LinkedFlowState
 
-from ..flow import Flow, LinkedFlow, FlowHandle
+from ..flow import Flow, FlowHandle, LinkedFlow
 from ..model import FlowModel, SpecificPort
 from ..util import edge_matches_output_port
 
@@ -16,15 +17,17 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def add_to_attachments_stash(
-    attachments: dict[SpecificPort, list[MemoryObjectSendStream]], flow: Flow
+    attachments: dict[SpecificPort, list[MemoryObjectSendStream]],
+    linked_flow: LinkedFlow,
 ) -> None:
     """Add send_streams from the flow to the attachments."""
-    if flow._model.externals is not None:
-        for external_port in flow._model.externals.connections:
+    flow = linked_flow.flow
+    if flow.model.externals is not None:
+        for external_port in flow.model.externals.connections:
             # Find all connections to that external port
             found_send_streams = [
                 send_stream
-                for edge_model, send_stream in flow._senders.items()
+                for edge_model, send_stream in linked_flow._senders.items()
                 if edge_matches_output_port(
                     external_port.node, external_port.port, edge_model
                 )
@@ -36,15 +39,17 @@ def add_to_attachments_stash(
 
 
 def remove_from_attachments_stash(
-    attachments: dict[SpecificPort, list[MemoryObjectSendStream]], flow: Flow
+    attachments: dict[SpecificPort, list[MemoryObjectSendStream]],
+    linked_flow: LinkedFlow,
 ) -> None:
     """Remove send_streams belonging to the flow from the attachments."""
-    if flow._model.externals is not None:
-        for external_port in flow._model.externals.connections:
+    flow = linked_flow.flow
+    if flow.model.externals is not None:
+        for external_port in flow.model.externals.connections:
             # Find all connections to that external port
             found_send_streams = [
                 send_stream
-                for edge_model, send_stream in flow._senders.items()
+                for edge_model, send_stream in linked_flow._senders.items()
                 if edge_matches_output_port(
                     external_port.node, external_port.port, edge_model
                 )
@@ -90,11 +95,11 @@ class FlowManager(AsyncContextManager):
     def _link_flow(self, flow: Flow) -> LinkedFlow:
         """Links a flow object, creating the comms streams. These are not reentrant, so this must be done again every time a flow is started/loaded."""
         return LinkedFlow(flow)
-    
+
     async def _load_flow(self, linked_flow: LinkedFlow) -> FlowHandle:
         """Load/Start a Flow, giving back the needed ID/Flowhandle for identification."""
         return await FlowHandle.from_linked_flow(linked_flow, self._tg)
-        
+
     def register_flow(self, path: Path, key: Optional[Hashable] = None) -> Hashable:
         """Compile and register a flow."""
         # Check if key is already in use
@@ -108,22 +113,17 @@ class FlowManager(AsyncContextManager):
         # Return used key
         return flow_key
 
-    async def spawn_flow(self, key: Hashable):
-        # Check if flow is saved
-        try:
-            flow = self.saved_flows[key]
-        except KeyError as exc:
-            raise KeyNotPresentException from exc
+    async def _spawn_flow(self, flow: Flow) -> FlowHandle:
+        """Link and load a flow. Assumes flow is already saved."""
         # Link
         linked_flow = self._link_flow(flow)
         # Start/Load
         flow_handle = await self._load_flow(linked_flow)
         # Update stash of external connections.
-        add_to_attachments_stash(self._attachments, flow_handle.linked_flow.flow)
-        # Register flow as 'running'
-        self.running_flows[key] = flow_handle
+        add_to_attachments_stash(self._attachments, flow_handle.linked_flow)
+        return flow_handle
 
-    async def kill_flow(self, key: Hashable):
+    async def _kill_flow(self, key: Hashable):
         """Completely remove a flow from execution."""
         # Get flow handle
         try:
@@ -134,7 +134,7 @@ class FlowManager(AsyncContextManager):
             )
             return
         # Detach Flow from external connections.
-        remove_from_attachments_stash(self._attachments, flow_handle.linked_flow.flow)
+        remove_from_attachments_stash(self._attachments, flow_handle.linked_flow)
         # Exit all streams
         await flow_handle.linked_flow.aclose()
         # Stop processes immediately
@@ -142,12 +142,40 @@ class FlowManager(AsyncContextManager):
         # Deregister flow
         del self.running_flows[key]
 
+    async def start_flow(self, key: Hashable) -> None:
+        """Spawn flow if not running, activate if inactive."""
+        # Check if flow is saved
+        try:
+            flow = self.saved_flows[key]
+        except KeyError as exc:
+            raise KeyNotPresentException from exc
+        # Check if linked flow is already running
+        if key in self.running_flows:
+            flow_handle = self.running_flows[key]
+            flow_state = flow_handle.linked_flow.state
+            if flow_state == LinkedFlowState.INACTIVE:
+                # TODO: activate flow
+                pass
+            else:
+                return
+        else:
+            # Spawn flow
+            flow_handle = await self._spawn_flow(flow)
+            # Register flow handle
+            self.running_flows[key] = flow_handle
 
     async def start_flow_from_filepath(self, path: Path, key=None):
         """Start a flow from a filepath."""
         used_key = self.register_flow(path, key)
-        await self.spawn_flow(used_key)
+        await self.start_flow(used_key)
 
+    async def stop_flow(self, key: Hashable) -> None:
+        """Deactivate flow."""
+        raise NotImplementedError
+
+    async def kill_flow(self, key: Hashable) -> None:
+        """Kill flow forcefully."""
+        await self._kill_flow(key)
 
     def get_attachments(self):
         """Return current set of attachments for the Persistent Cells."""

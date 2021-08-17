@@ -1,5 +1,6 @@
 import logging
 from contextlib import AsyncExitStack
+from datetime import datetime
 from typing import Any, Optional
 
 from anyio import (
@@ -39,6 +40,17 @@ class InGroup:
                     if edge_matches_input_port(node_name, port_name, edge_model):
                         self.receivers[port_name] = all_receivers[edge_model]
 
+    async def pull(self):
+        # Get inputs. For now, just get one element from each input port if available
+        # TODO: Add Fan-In strategies
+        inputs: list[Any] = []
+        for receive_stream in self.receivers.values():
+            try:
+                inputs.append(await receive_stream.receive())
+            except ClosedResourceError as exc:
+                _LOGGER.error(f"ClosedResourceError!", exc_info=exc)
+        return inputs
+
 
 class OutGroup:
     """Contains references to the Port buffers in the child nodes"""
@@ -49,7 +61,12 @@ class OutGroup:
         output_ports: Optional[dict[str, PortModel]],
         all_senders: Optional[dict[EdgeModel, MemoryObjectSendStream]] = None,
     ):
+        # Create default construction for all ports
         self.senders: dict[str, list[MemoryObjectSendStream]] = {}
+        if output_ports is not None:
+            for port_name in output_ports.keys():
+                self.senders[port_name] = []
+        # Pass in given buffers
         if output_ports is not None and all_senders is not None:
             for port_name in output_ports.keys():
                 found_send_streams = [
@@ -58,6 +75,16 @@ class OutGroup:
                     if edge_matches_output_port(node_name, port_name, edge_model)
                 ]
                 self.senders[port_name] = found_send_streams
+
+    async def push(self, outputs):
+        # TODO: Proper mapping from myfunc outputs to output ports
+        for output_port, e in zip(self.senders.values(), [outputs]):
+            for output_stream in output_port:
+                try:
+                    await output_stream.send_nowait(e)
+                except BrokenResourceError as exc:
+                    # This is probably a persistent cell, trying to send to a Flow which has been shut down.
+                    pass  # TODO
 
 
 class AsyncNode(AsyncResource):
@@ -72,6 +99,10 @@ class AsyncNode(AsyncResource):
         self._stack = AsyncExitStack()
         self.running: bool = True
 
+        # Timings
+        self._last_run = datetime.now()
+        self._time_between_runs = 1.0 / model.config.frequency  # [s]
+
         # Default Input/Output-groups TODO: Break these out into their own component
         self.ins = InGroup(self.name, self.model.inputs)
         self.outs = OutGroup(self.name, self.model.outputs)
@@ -84,7 +115,11 @@ class AsyncNode(AsyncResource):
         if self.should_stop():
             self.stop()
 
-    def offer_buffers(self, senders: dict[EdgeModel, MemoryObjectSendStream], receivers: dict[EdgeModel, MemoryObjectReceiveStream]) -> None:
+    def offer_buffers(
+        self,
+        senders: dict[EdgeModel, MemoryObjectSendStream],
+        receivers: dict[EdgeModel, MemoryObjectReceiveStream],
+    ) -> None:
         """Pass buffers in and create new input/output-groups."""
         self.ins = InGroup(self.name, self.model.inputs, receivers)
         self.outs = OutGroup(self.name, self.model.outputs, senders)
@@ -132,7 +167,6 @@ class AsyncNode(AsyncResource):
         with CancelScope() as scope:
             task_status.started(scope)
             while True:
-
                 # Starting and stopping is idempotent
                 if self.should_stop():
                     self.stop()
@@ -158,31 +192,11 @@ class AsyncNode(AsyncResource):
                         await self.attach_new_senders(new_attachments)
                         continue
 
-                # Get inputs. For now, just get one element from each input port if available
-                # TODO: Add Fan-In strategies
-                myfunc_inputs: list[Any] = []
-                for receive_stream in self.ins.receivers.values():
-                    try:
-                        myfunc_inputs.append(await receive_stream.receive())
-                    except ClosedResourceError as exc:
-                        _LOGGER.error(
-                            f"ClosedResourceError in {self.name}", exc_info=exc
-                        )
+                myfunc_inputs = self.ins.pull()
                 # Run executable code
                 myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
                 # Push results to child nodes.
-                # TODO: Proper mapping from myfunc outputs to output ports!
-                for output_port, e in zip(self.outs.senders.values(), [myfunc_outputs]):
-                    for output_stream in output_port:
-                        try:
-                            await output_stream.send_nowait(e)
-                        except BrokenResourceError as exc:
-                            # This is probably a persistent cell, trying to send to a Flow which has been shut down.
-                            _LOGGER.debug(
-                                f"Persistent cell '{self.name}' sending through a cancelled stream",
-                                exc_info=exc,
-                            )
-                            pass  # TODO
+                await self.outs.push(myfunc_outputs)
 
                 # Wait until it is time to run again
                 # TODO: Different strategies for waiting.

@@ -1,12 +1,15 @@
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
 from copy import deepcopy
+from dataclasses import dataclass, field
+from enum import Enum, auto
+
 from anyio import create_memory_object_stream
 from anyio.abc import AsyncResource, CancelScope, TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from ..async_node import AsyncNode
 from ..model import EdgeModel, FlowModel
+
 
 @dataclass
 class Flow:
@@ -18,16 +21,28 @@ class Flow:
     def __post_init__(self):
         """Assemble the Nodes from a FlowModel."""
         # Create Nodes
+        self.nodes = []
         for node_name in self.model.nodes.keys():
             # Create new node
             node = AsyncNode(node_name, self.model.nodes[node_name])
             self.nodes.append(node)
 
+
+class LinkedFlowState(Enum):
+    """Possible states for an actual flow."""
+
+    UNUSED = auto()
+    ACTIVE = auto()
+    INACTIVE = auto()
+    KILLED = auto()
+
+
 class LinkedFlow(AsyncResource):
     """A Flow ready for execution. This is one-time use, not reentrant."""
 
     def __init__(self, flow: Flow):
-        self.flow = deepcopy(flow) # We will be modifying this, so 'pass-by-value'
+        self.state: LinkedFlowState = LinkedFlowState.UNUSED
+        self.flow = deepcopy(flow)  # We will be modifying this, so 'pass-by-value'
         self._stack = AsyncExitStack()
         # Create buffers
         (self._senders, self._receivers) = self._create_buffers(self.flow)
@@ -36,8 +51,11 @@ class LinkedFlow(AsyncResource):
             node.offer_buffers(self._senders, self._receivers)
 
     @staticmethod
-    def _create_buffers(flow: Flow) -> tuple[
-        dict[EdgeModel, MemoryObjectSendStream], dict[EdgeModel, MemoryObjectReceiveStream]
+    def _create_buffers(
+        flow: Flow,
+    ) -> tuple[
+        dict[EdgeModel, MemoryObjectSendStream],
+        dict[EdgeModel, MemoryObjectReceiveStream],
     ]:
         """Create buffers (send- and receive-streams)."""
         senders: dict[EdgeModel, MemoryObjectSendStream] = {}
@@ -53,11 +71,12 @@ class LinkedFlow(AsyncResource):
     async def __aenter__(self):
         for node in self.flow.nodes:
             await self._stack.enter_async_context(node)
+        self._state = LinkedFlowState.ACTIVE
         return self
-
 
     async def aclose(self):
         """Close a flow."""
+        self._state = LinkedFlowState.KILLED
         await self._stack.aclose()
 
 
@@ -73,12 +92,15 @@ class FlowCancelScope:
             await task.cancel()
 
 
+# TODO: The lifetime of all the tasks and the aenter/aexit status of the
+# linked_flow should depend on the lifetime of this object?
 @dataclass
 class FlowHandle:
     """A Flow and its FlowCancelScope, with convenience methods."""
 
     linked_flow: LinkedFlow
-    scopes: FlowCancelScope
+    scopes: FlowCancelScope = field(init=False)
+    _stack: AsyncExitStack = AsyncExitStack()
 
     async def stop_flow_immediately(self):
         """Stop all tasks and unwind stack."""
@@ -88,12 +110,18 @@ class FlowHandle:
     @classmethod
     async def from_linked_flow(cls, linked_flow: LinkedFlow, tg: TaskGroup):
         """Create an instance from a LinkedFlow. The tasks start in the given TaskGroup."""
+        self = cls(linked_flow)
+        # aenter flow
+        await self._stack.enter_async_context(linked_flow)
         # Start tasks
         scopes: list[CancelScope] = []
-        for node in linked_flow.flow.nodes:
+        for node in self.linked_flow.flow.nodes:
             # Start task
             cancel_scope: CancelScope = await tg.start(node)
             scopes.append(cancel_scope)
 
         flow_cancel_scope = FlowCancelScope(scopes)
-        return cls(linked_flow, flow_cancel_scope)
+        # Change status
+        linked_flow.state = LinkedFlowState.ACTIVE
+        self.scopes = flow_cancel_scope
+        return self

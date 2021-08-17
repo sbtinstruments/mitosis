@@ -30,8 +30,8 @@ profile = 'black'
 
 [mypy]
 python_version = "3.9"
-strict = True
-no_implicit_reexport = False
+strict = "True"
+no_implicit_reexport = "False"
 
 [tool.pylint.master]
 # i,j,k: You can use this for an integer index in a loop.
