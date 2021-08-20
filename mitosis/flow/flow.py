@@ -1,3 +1,4 @@
+from collections import defaultdict
 from contextlib import AsyncExitStack
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -6,6 +7,8 @@ from enum import Enum, auto
 from anyio import create_memory_object_stream
 from anyio.abc import AsyncResource, CancelScope, TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+
+from mitosis.model.edge_model import SpecificPort
 
 from ..async_node import AsyncNode
 from ..model import EdgeModel, FlowModel
@@ -54,18 +57,18 @@ class LinkedFlow(AsyncResource):
     def _create_buffers(
         flow: Flow,
     ) -> tuple[
-        dict[EdgeModel, MemoryObjectSendStream],
-        dict[EdgeModel, MemoryObjectReceiveStream],
+        dict[SpecificPort, list[MemoryObjectSendStream]],
+        dict[SpecificPort, MemoryObjectReceiveStream],
     ]:
         """Create buffers (send- and receive-streams)."""
-        senders: dict[EdgeModel, MemoryObjectSendStream] = {}
-        receivers: dict[EdgeModel, MemoryObjectReceiveStream] = {}
+        senders: dict[SpecificPort, list[MemoryObjectSendStream]] = defaultdict(list)
+        receivers: dict[SpecificPort, MemoryObjectReceiveStream] = {}
         for edge_model in flow.model.edges:
             send_stream, receive_stream = create_memory_object_stream(
                 max_buffer_size=20
             )  # TODO: add item_types
-            senders[edge_model] = send_stream
-            receivers[edge_model] = receive_stream
+            senders[edge_model.start].append(send_stream)
+            receivers[edge_model.end] = receive_stream
         return (senders, receivers)
 
     async def __aenter__(self):

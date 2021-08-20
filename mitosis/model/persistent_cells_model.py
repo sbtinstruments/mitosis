@@ -11,7 +11,7 @@ class PersistentCellsModel(BaseModel):
     @validator("cells")
     def cells_have_no_inputs(v):
         for cell in v.values():
-            if cell.inputs is not None:
+            if len(cell.inputs) != 0:
                 raise PersistentCellValidationException(
                     "Persistent cells can not have inputs."
                 )

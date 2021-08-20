@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import AsyncContextManager, Hashable, Optional
@@ -25,13 +26,7 @@ def add_to_attachments_stash(
     if flow.model.externals is not None:
         for external_port in flow.model.externals.connections:
             # Find all connections to that external port
-            found_send_streams = [
-                send_stream
-                for edge_model, send_stream in linked_flow._senders.items()
-                if edge_matches_output_port(
-                    external_port.node, external_port.port, edge_model
-                )
-            ]
+            found_send_streams = linked_flow._senders[external_port]
             if attachments.get(external_port) is None:
                 attachments[external_port] = found_send_streams
             else:
@@ -47,13 +42,7 @@ def remove_from_attachments_stash(
     if flow.model.externals is not None:
         for external_port in flow.model.externals.connections:
             # Find all connections to that external port
-            found_send_streams = [
-                send_stream
-                for edge_model, send_stream in linked_flow._senders.items()
-                if edge_matches_output_port(
-                    external_port.node, external_port.port, edge_model
-                )
-            ]
+            found_send_streams = linked_flow._senders[external_port]
             current_attachments = attachments[external_port]
             attachments[external_port] = [
                 sender
@@ -75,7 +64,9 @@ class FlowManager(AsyncContextManager):
         # A stash of senders, representing active connections from persistent cells to Flows.
         # Whenever a flow starts or stops, the persistent cells must update themselves from this.
         # This is NOT up to this manager but must be handled by whoever creates an instance of this class
-        self._attachments: dict[SpecificPort, list[MemoryObjectSendStream]] = {}
+        self._attachments: dict[
+            SpecificPort, list[MemoryObjectSendStream]
+        ] = defaultdict(list)
 
     async def __aenter__(self):
         """Enter async context. Creates own taskgroup."""

@@ -1,7 +1,6 @@
 import logging
 from contextlib import AsyncExitStack
-from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from anyio import (
     TASK_STATUS_IGNORED,
@@ -11,80 +10,17 @@ from anyio import (
     Event,
     WouldBlock,
     current_effective_deadline,
-    sleep,
+    current_time,
+    sleep_until,
 )
 from anyio.abc import AsyncResource, TaskStatus
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from ..model import EdgeModel, NodeModel, PortModel, SpecificPort
 from ..util import edge_matches_input_port, edge_matches_output_port
+from .port_group import InGroup, OutGroup
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class InGroup:
-    """Contains the node's input stream receivers"""
-
-    def __init__(
-        self,
-        node_name: str,
-        input_ports: Optional[dict[str, PortModel]],
-        all_receivers: Optional[dict[EdgeModel, MemoryObjectReceiveStream]] = None,
-    ):
-        self.receivers: dict[str, MemoryObjectReceiveStream] = {}
-        if input_ports is not None and all_receivers is not None:
-            # For each input port
-            for port_name in input_ports.keys():
-                # Find appropriate edge
-                for edge_model in all_receivers.keys():
-                    if edge_matches_input_port(node_name, port_name, edge_model):
-                        self.receivers[port_name] = all_receivers[edge_model]
-
-    async def pull(self):
-        # Get inputs. For now, just get one element from each input port if available
-        # TODO: Add Fan-In strategies
-        inputs: list[Any] = []
-        for receive_stream in self.receivers.values():
-            try:
-                inputs.append(await receive_stream.receive())
-            except ClosedResourceError as exc:
-                _LOGGER.error(f"ClosedResourceError!", exc_info=exc)
-        return inputs
-
-
-class OutGroup:
-    """Contains references to the Port buffers in the child nodes"""
-
-    def __init__(
-        self,
-        node_name: str,
-        output_ports: Optional[dict[str, PortModel]],
-        all_senders: Optional[dict[EdgeModel, MemoryObjectSendStream]] = None,
-    ):
-        # Create default construction for all ports
-        self.senders: dict[str, list[MemoryObjectSendStream]] = {}
-        if output_ports is not None:
-            for port_name in output_ports.keys():
-                self.senders[port_name] = []
-        # Pass in given buffers
-        if output_ports is not None and all_senders is not None:
-            for port_name in output_ports.keys():
-                found_send_streams = [
-                    send_stream
-                    for edge_model, send_stream in all_senders.items()
-                    if edge_matches_output_port(node_name, port_name, edge_model)
-                ]
-                self.senders[port_name] = found_send_streams
-
-    async def push(self, outputs):
-        # TODO: Proper mapping from myfunc outputs to output ports
-        for output_port, e in zip(self.senders.values(), [outputs]):
-            for output_stream in output_port:
-                try:
-                    await output_stream.send_nowait(e)
-                except BrokenResourceError as exc:
-                    # This is probably a persistent cell, trying to send to a Flow which has been shut down.
-                    pass  # TODO
 
 
 class AsyncNode(AsyncResource):
@@ -99,13 +35,16 @@ class AsyncNode(AsyncResource):
         self._stack = AsyncExitStack()
         self.running: bool = True
 
+        # Executable function
+        self._executable: Callable = model.get_executable()
+
         # Timings
-        self._last_run = datetime.now()
+        self._last_run = current_time()
         self._time_between_runs = 1.0 / model.config.frequency  # [s]
 
         # Default Input/Output-groups TODO: Break these out into their own component
-        self.ins = InGroup(self.name, self.model.inputs)
-        self.outs = OutGroup(self.name, self.model.outputs)
+        self.ins = InGroup(self.name, model.inputs)
+        self.outs = OutGroup(self.name, model.outputs)
 
         # ReceiveStream for new attached connections
         self._attachments_receiver: Optional[MemoryObjectReceiveStream] = None
@@ -117,8 +56,8 @@ class AsyncNode(AsyncResource):
 
     def offer_buffers(
         self,
-        senders: dict[EdgeModel, MemoryObjectSendStream],
-        receivers: dict[EdgeModel, MemoryObjectReceiveStream],
+        senders: dict[SpecificPort, MemoryObjectSendStream],
+        receivers: dict[SpecificPort, MemoryObjectReceiveStream],
     ) -> None:
         """Pass buffers in and create new input/output-groups."""
         self.ins = InGroup(self.name, self.model.inputs, receivers)
@@ -130,8 +69,9 @@ class AsyncNode(AsyncResource):
 
     def should_stop(self):
         """Check if a node should stop execution."""
-        if self.model.config.shut_down_when_ignored is True and all(
-            len(v) == 0 for v in self.outs.senders.values()
+        if (
+            self.model.config.shut_down_when_ignored is True
+            and self.outs.can_send() is False
         ):
             return True
         return False
@@ -141,21 +81,12 @@ class AsyncNode(AsyncResource):
         self.running = False
 
     async def attach_new_senders(self, new_attachments):
-        for output_port_name, port_senders in self.outs.senders.items():
-            specific_port = SpecificPort(node=self.name, port=output_port_name)
-            if specific_port in new_attachments.keys():
-                new_senders = new_attachments[specific_port]
-                port_senders.clear()
-                port_senders += new_senders
-                # TODO: Do we need to enter_async_context on the new attachments?
+        self.outs.offer_senders(new_attachments)
 
     async def __aenter__(self):
         """Put all senders and receivers on the stack."""
-        for receiver in self.ins.receivers.values():
-            await self._stack.enter_async_context(receiver)
-        for output_port in self.outs.senders.values():
-            for sender in output_port:
-                await self._stack.enter_async_context(sender)
+        await self._stack.enter_async_context(self.ins)
+        await self._stack.enter_async_context(self.outs)
         return self
 
     async def aclose(self):
@@ -192,12 +123,13 @@ class AsyncNode(AsyncResource):
                         await self.attach_new_senders(new_attachments)
                         continue
 
-                myfunc_inputs = self.ins.pull()
+                myfunc_inputs = await self.ins.pull()
                 # Run executable code
-                myfunc_outputs = self.model.get_executable()(*myfunc_inputs)
+                myfunc_outputs = self._executable(*myfunc_inputs)
                 # Push results to child nodes.
                 await self.outs.push(myfunc_outputs)
 
                 # Wait until it is time to run again
                 # TODO: Different strategies for waiting.
-                await sleep(1.0 / self.model.config.frequency)
+                await sleep_until(self._last_run + self._time_between_runs)
+                self._last_run = current_time()

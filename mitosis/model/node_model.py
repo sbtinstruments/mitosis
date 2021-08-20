@@ -40,7 +40,7 @@ class ExecutableModel(BaseModel):
             raise FlowValidationException(f"Unsupported Executable type")
         return values
 
-    def get_executable(self):
+    def get_executable(self) -> Callable:
         """Return code to run every cycle."""
         return self.code[_EXECUTABLE_NAME]
 
@@ -77,9 +77,9 @@ class NodeModel(BaseModel):
 
     executable: ExecutableModel
     config: NodeConfig
-    inputs: Optional[dict[str, PortModel]]
-    outputs: Optional[dict[str, PortModel]]
+    inputs: dict[str, PortModel] = {}
+    outputs: dict[str, PortModel] = {}
 
-    def get_executable(self):
+    def get_executable(self) -> Callable:
         """Return code to run every cycle."""
         return self.executable.get_executable()

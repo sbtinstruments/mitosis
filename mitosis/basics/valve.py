@@ -77,11 +77,14 @@ class ValveState:
 class ValveSendStream:
     valve_state: ValveState
 
-    async def send(self, obj: Any):
+    async def send(self, obj: Any) -> None:
         await self.valve_state.send(obj)
 
-    def send_nowait(self, obj: Any):
+    def send_nowait(self, obj: Any) -> None:
         self.valve_state.send_nowait(obj)
+
+    def is_open(self) -> bool:
+        return self.valve_state.is_open()
 
     async def __aenter__(self):
         await self.valve_state.aenter_send()

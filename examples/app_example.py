@@ -20,7 +20,7 @@ async def main():
 
         await app.start_flow("measurement1")
         print("created")
-        await sleep(5)
+        await sleep(10)
         print("shutting down the first one")
         await app.kill_flow("measurement1")
         print("Stopped")
